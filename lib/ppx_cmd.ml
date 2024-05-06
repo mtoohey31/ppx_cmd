@@ -194,7 +194,7 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
           Option.map
             (fun short ->
               {
-                pc_lhs = Pat.constant (Const.char short);
+                pc_lhs = Pat.constant (Const.string (String.make 1 short));
                 pc_guard = None;
                 pc_rhs =
                   [%expr

@@ -4,7 +4,7 @@ let show_cmd_result show_cmd = function
   | Ok cmd -> "Ok (" ^ show_cmd cmd ^ ")"
   | Error e -> "Error (" ^ e ^ ")"
 
-type basic = { id : int; name : string }
+type basic = { id : int; name : string [@short 'n'] }
 [@@deriving cmd, show] [@@warning "-69"]
 
 let test_basic _ =
@@ -14,7 +14,7 @@ let test_basic _ =
     (try_parse_basic_with [ "--id"; "7"; "--name"; "joe" ]);
   assert_equal
     (Ok { id = -518; name = "bob" })
-    (try_parse_basic_with [ "--id"; "-518"; "--name"; "bob" ]);
+    (try_parse_basic_with [ "--id"; "-518"; "-n"; "bob" ]);
   assert_equal (Error {|no value provided for flag "--name"|})
     (try_parse_basic_with [ "--id"; "518" ])
 
