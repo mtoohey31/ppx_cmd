@@ -1,0 +1,8 @@
+(library
+ (name ppx_cmd)
+ (public_name ppx_cmd)
+ (synopsis "[@@deriving cmd]")
+ (preprocess
+  (pps ppxlib.metaquot))
+ (libraries compiler-libs.common ppxlib ppx_deriving.api)
+ (kind ppx_deriver))

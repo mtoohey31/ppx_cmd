@@ -1,0 +1,9 @@
+(rule
+ (deps test_ppx_cmd.cppo.ml)
+ (targets test_ppx_cmd.ml)
+ (action (run %{bin:cppo} -V OCAML:%{ocaml_version} %{deps} -o %{targets})))
+
+(test
+ (name test_ppx_cmd)
+ (libraries ounit2 ppx_deriving.runtime)
+ (preprocess (pps ppx_cmd ppx_deriving.show)))
