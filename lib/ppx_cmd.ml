@@ -195,7 +195,11 @@ let arg_of_label_decl quoter name loc typ =
     | Some fn -> Ppx_deriving.quote ~quoter fn
     | None -> parser_of_typ loc typ
   in
-  let default = Attribute.get ct_attr_default typ in
+  let default =
+    match (Attribute.get ct_attr_default typ, typ) with
+    | None, [%type: [%t? _] option] -> Some [%expr Stdlib.Option.None]
+    | default, _ -> default
+  in
   { name; placeholder; parser; default }
 
 let input_of_label_decl quoter
@@ -221,6 +225,18 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
     | Ptype_record labels, _ ->
         let flags, args =
           List.partition_map (input_of_label_decl quoter) labels
+        in
+        let () =
+          if
+            List.filter (fun { default; _ } -> Option.is_some default) args
+            |> List.length > 1
+          then
+            raise_errorf ~loc
+              "%s cannot be derived when multiple positional arguments can \
+               appear a variable number of times because it introduces \
+               ambiguity"
+              deriver
+          else ()
         in
         let arg_prefix = "arg_" in
         let flag_prefix = "flag_" in
@@ -293,9 +309,11 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                   | Stdlib.Option.Some [%p pvar name] -> [%e end_flags]
                   | None ->
                       Stdlib.Result.Error
-                        ("no value provided for flag \""
-                        ^ Stdlib.String.escaped ("--" ^ [%e str long])
-                        ^ "\"")]
+                        [%e
+                          str
+                            ("no value provided for flag \""
+                            ^ Stdlib.String.escaped ("--" ^ long)
+                            ^ "\"")]]
               else end_flags)
             [%expr
               Stdlib.Result.Ok
@@ -313,31 +331,59 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                   |> record]]
             flags
         in
-        let end_args =
+        let _, end_args =
           List.fold_left
-            (fun end_flags { name; placeholder; parser; _ } ->
+            (fun (i, end_flags) { name; placeholder; parser; default } ->
+              match default with
+              | Some default ->
+                  ( i - 1,
+                    [%expr
+                      match args with
+                      | v :: args when List.length args >= [%e int i] -> begin
+                          match [%e parser] v with
+                          | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
+                              [%e end_flags]
+                          | Error e ->
+                              Stdlib.Result.Error
+                                ([%e
+                                   str
+                                     ("error parsing value for [<" ^ placeholder
+                                    ^ ">]: ")]
+                                ^ e)
+                        end
+                      | _ ->
+                          let [%p pvar (arg_prefix ^ name)] = [%e default] in
+                          [%e end_flags]] )
+              | None ->
+                  ( i - 1,
+                    [%expr
+                      match args with
+                      | v :: args -> begin
+                          match [%e parser] v with
+                          | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
+                              [%e end_flags]
+                          | Error e ->
+                              Stdlib.Result.Error
+                                ([%e
+                                   str
+                                     ("error parsing value for <" ^ placeholder
+                                    ^ ">: ")]
+                                ^ e)
+                        end
+                      | [] ->
+                          Stdlib.Result.Error
+                            [%e
+                              str
+                                ("expected positional argument <" ^ placeholder
+                               ^ ">")]] ))
+            ( List.length args,
               [%expr
                 match args with
-                | v :: args -> begin
-                    match [%e parser] v with
-                    | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
-                        [%e end_flags]
-                    | Error e ->
-                        Stdlib.Result.Error
-                          ("error parsing value for <" ^ [%e str placeholder]
-                         ^ ">: " ^ e)
-                  end
-                | [] ->
+                | [] -> [%e end_flags]
+                | s :: _ ->
                     Stdlib.Result.Error
-                      ("expected positional argument <" ^ [%e str placeholder]
-                     ^ ">")])
-            [%expr
-              match args with
-              | [] -> [%e end_flags]
-              | s :: _ ->
-                  Stdlib.Result.Error
-                    ("unexpected positional argument \""
-                   ^ Stdlib.String.escaped s ^ "\"")]
+                      ("unexpected positional argument \""
+                     ^ Stdlib.String.escaped s ^ "\"")] )
             (List.rev args)
         in
         let body =

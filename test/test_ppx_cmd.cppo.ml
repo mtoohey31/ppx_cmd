@@ -106,17 +106,34 @@ let test_many_short _ =
     (Ok { foo = false; bar = "baz"; quux = false })
     (try_parse_many_short_with [ "-b"; "baz" ])
 
-type defaults = { server : string option; port : int [@default 22] }
+type defaults = {
+  password : string option;
+  port : int; [@default 22]
+  key_file : string option; [@arg]
+  host : string; [@arg]
+}
 [@@deriving cmd, show]
 
 let test_defaults _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_defaults) in
   assert_equal
-    (Ok { server = Some "foo"; port = 22 })
-    (try_parse_defaults_with [ "--server"; "foo" ]);
+    (Ok
+       {
+         password = Some "foo";
+         port = 22;
+         key_file = None;
+         host = "example.com";
+       })
+    (try_parse_defaults_with [ "--password"; "foo"; "example.com" ]);
   assert_equal
-    (Ok { server = None; port = 5681 })
-    (try_parse_defaults_with [ "--port"; "5681" ])
+    (Ok
+       {
+         password = None;
+         port = 5681;
+         key_file = Some "a-key-file";
+         host = "example.com";
+       })
+    (try_parse_defaults_with [ "--port"; "5681"; "a-key-file"; "example.com" ])
 
 type mv = { src : string; [@arg] dst : string [@arg] } [@@deriving cmd, show]
 
