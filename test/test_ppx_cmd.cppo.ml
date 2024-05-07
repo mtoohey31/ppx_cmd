@@ -91,8 +91,28 @@ let test_types _ =
          "--o";
        ])
 
+type many_short = {
+  foo : bool; [@short 'f']
+  bar : string; [@short 'b']
+  quux : bool; [@short 'q']
+}
+[@@deriving cmd, show]
+
+let test_many_short _ =
+  let assert_equal = assert_equal ~printer:(show_cmd_result show_many_short) in
+  assert_equal
+    (Ok { foo = true; bar = "baz"; quux = true })
+    (try_parse_many_short_with [ "-fqb"; "baz" ]);
+  assert_equal
+    (Ok { foo = false; bar = "baz"; quux = false })
+    (try_parse_many_short_with [ "-b"; "baz" ])
+
 let suite =
   "Test deriving(cmd)"
-  >::: [ "test_basic" >:: test_basic; "test_types" >:: test_types ]
+  >::: [
+         "test_basic" >:: test_basic;
+         "test_types" >:: test_types;
+         "test_many_short" >:: test_many_short;
+       ]
 
 let _ = run_test_tt_main suite

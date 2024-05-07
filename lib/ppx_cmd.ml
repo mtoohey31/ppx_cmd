@@ -221,7 +221,7 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
           Option.map
             (fun short ->
               {
-                pc_lhs = Pat.constant (Const.string (String.make 1 short));
+                pc_lhs = Pat.constant (Const.char short);
                 pc_guard = None;
                 pc_rhs = rhs_case name parser;
               })
@@ -282,8 +282,11 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                   [%e handle_long]
                 end
               | s :: ss when Stdlib.String.starts_with ~prefix:"-" s -> begin
-                  let short =
-                    Stdlib.String.sub s 1 (Stdlib.String.length s - 1)
+                  let length = Stdlib.String.length s in
+                  let short, ss =
+                    if length > 2 then
+                      (s.[1], ("-" ^ Stdlib.String.sub s 2 (length - 2)) :: ss)
+                    else (s.[1], ss)
                   in
                   [%e handle_short]
                 end
