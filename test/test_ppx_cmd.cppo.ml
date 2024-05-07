@@ -107,12 +107,34 @@ let test_many_short _ =
     (Ok { foo = false; bar = "baz"; quux = false })
     (try_parse_many_short_with [ "-b"; "baz" ])
 
+type mv = { src : string; [@arg] dst : string [@arg] }
+[@@deriving cmd, show] [@@warning "-69"]
+
+let test_mv _ =
+  let assert_equal = assert_equal ~printer:(show_cmd_result show_mv) in
+  assert_equal
+    (Ok { src = "foo"; dst = "bar" })
+    (try_parse_mv_with [ "foo"; "bar" ]);
+  assert_equal (Error "expected positional argument <SRC>")
+    (try_parse_mv_with []);
+  assert_equal (Error "expected positional argument <DST>")
+    (try_parse_mv_with [ "foo" ]);
+  assert_equal (Error {|unexpected positional argument "baz"|})
+    (try_parse_mv_with [ "foo"; "bar"; "baz" ]);
+  assert_equal
+    (Ok { src = "--foo"; dst = "--bar" })
+    (try_parse_mv_with [ "--"; "--foo"; "--bar" ]);
+  assert_equal
+    (Ok { src = "foo"; dst = "bar" })
+    (try_parse_mv_with [ "foo"; "bar"; "--" ])
+
 let suite =
   "Test deriving(cmd)"
   >::: [
          "test_basic" >:: test_basic;
          "test_types" >:: test_types;
          "test_many_short" >:: test_many_short;
+         "test_mv" >:: test_mv;
        ]
 
 let _ = run_test_tt_main suite

@@ -19,6 +19,14 @@ let ct_attr_default =
     Ast_pattern.(single_expr_payload __)
     (fun e -> e)
 
+let ct_attr_arg =
+  Attribute.declare_flag "deriving.cmd.arg" Attribute.Context.core_type
+
+let ct_attr_placeholder =
+  Attribute.declare "deriving.cmd.placeholder" Attribute.Context.core_type
+    Ast_pattern.(single_expr_payload (estring __))
+    (fun e -> e)
+
 let ct_attr_short =
   Attribute.declare "deriving.cmd.short" Attribute.Context.core_type
     Ast_pattern.(single_expr_payload (echar __))
@@ -54,6 +62,94 @@ let sig_of_type type_decl =
          (core_type_of_decl type_decl));
   ]
 
+let rec parser_of_typ loc = function
+  | [%type: bool] ->
+      [%expr
+        fun (s : string) ->
+          match Stdlib.bool_of_string_opt s with
+          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          | None ->
+              Stdlib.Result.Error
+                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as bool")]
+  | [%type: int] ->
+      [%expr
+        fun (s : string) ->
+          match Stdlib.int_of_string_opt s with
+          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          | None ->
+              Stdlib.Result.Error
+                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as int")]
+  | [%type: int32] | [%type: Int32.t] ->
+      [%expr
+        fun (s : string) ->
+          match Stdlib.Int32.of_string_opt s with
+          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          | None ->
+              Stdlib.Result.Error
+                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as int32")]
+  | [%type: int64] | [%type: Int64.t] ->
+      [%expr
+        fun (s : string) ->
+          match Stdlib.Int64.of_string_opt s with
+          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          | None ->
+              Stdlib.Result.Error
+                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as int64")]
+  | [%type: nativeint] | [%type: Nativeint.t] ->
+      [%expr
+        fun (s : string) ->
+          match Stdlib.Nativeint.of_string_opt s with
+          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          | None ->
+              Stdlib.Result.Error
+                ("could not parse \"" ^ Stdlib.String.escaped s
+               ^ "\" as nativeint")]
+  | [%type: float] ->
+      [%expr
+        fun (s : string) ->
+          match Stdlib.float_of_string_opt s with
+          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          | None ->
+              Stdlib.Result.Error
+                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as float")]
+  | [%type: char] ->
+      [%expr
+        fun (s : string) ->
+          if Stdlib.String.length s = 1 then Stdlib.Result.Ok s.[0]
+          else Stdlib.Result.Error "incorrect length for char"]
+  | [%type: string] -> [%expr fun (s : string) -> Result.Ok s]
+  | [%type: [%t? typ] ref] ->
+      [%expr
+        fun (s : string) -> Stdlib.Result.map ref ([%e parser_of_typ loc typ] s)]
+  | [%type: [%t? typ] list] ->
+      [%expr
+        fun (s : string) ->
+          let rec try_map f = function
+            | x :: xs ->
+                Stdlib.Result.bind (f x) @@ fun y ->
+                Stdlib.Result.bind (try_map f xs) @@ fun ys ->
+                Stdlib.Result.Ok (y :: ys)
+            | [] -> Stdlib.Result.Ok []
+          in
+          try_map [%e parser_of_typ loc typ] (Stdlib.String.split_on_char ',' s)]
+  | [%type: [%t? typ] array] ->
+      [%expr
+        fun (s : string) ->
+          Stdlib.Result.map Stdlib.Array.of_list
+            ([%e parser_of_typ loc [%type: [%t typ] list]] s)]
+  | [%type: [%t? typ] option] ->
+      [%expr
+        fun (s : string) ->
+          Stdlib.Result.map Stdlib.Option.some ([%e parser_of_typ loc typ] s)]
+  | [%type: [%t? typ] lazy_t] | [%type: [%t? typ] Lazy.t] ->
+      [%expr
+        fun (s : string) ->
+          Stdlib.Result.map Stdlib.Lazy.from_val ([%e parser_of_typ loc typ] s)]
+  | { ptyp_desc = Ptyp_variant (_, _, _); _ } -> raise TODO
+  | { ptyp_loc; _ } as typ ->
+      raise_errorf ~loc:ptyp_loc "%s cannot be derived for %s" deriver
+        (Ppx_deriving.string_of_core_type typ)
+
 type flag = {
   name : string;
   long : string;
@@ -61,121 +157,47 @@ type flag = {
   parser : expression option;
 }
 
-let flag_of_label_decl quoter
-    { pld_name = { txt = name; _ }; pld_type; pld_attributes; _ } : flag =
-  let loc = !Ast_helper.default_loc in
-  let attrs = pld_type.ptyp_attributes @ pld_attributes in
-  let typ =
-    Ppx_deriving.remove_pervasives ~deriver
-      { pld_type with ptyp_attributes = attrs }
-  in
+let flag_of_label_decl quoter name loc typ =
   let long = Option.value (Attribute.get ct_attr_long typ) ~default:name in
   let short = Attribute.get ct_attr_short typ in
   let parser =
     match Attribute.get ct_attr_parser typ with
     | Some fn -> Some (Ppx_deriving.quote ~quoter fn)
     | None -> begin
-        let rec parser_of_typ = function
-          | [%type: bool] ->
-              [%expr
-                fun (s : string) ->
-                  match Stdlib.bool_of_string_opt s with
-                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
-                  | None ->
-                      Stdlib.Result.Error
-                        ("could not parse \"" ^ Stdlib.String.escaped s
-                       ^ "\" as bool")]
-          | [%type: int] ->
-              [%expr
-                fun (s : string) ->
-                  match Stdlib.int_of_string_opt s with
-                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
-                  | None ->
-                      Stdlib.Result.Error
-                        ("could not parse \"" ^ Stdlib.String.escaped s
-                       ^ "\" as int")]
-          | [%type: int32] | [%type: Int32.t] ->
-              [%expr
-                fun (s : string) ->
-                  match Stdlib.Int32.of_string_opt s with
-                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
-                  | None ->
-                      Stdlib.Result.Error
-                        ("could not parse \"" ^ Stdlib.String.escaped s
-                       ^ "\" as int32")]
-          | [%type: int64] | [%type: Int64.t] ->
-              [%expr
-                fun (s : string) ->
-                  match Stdlib.Int64.of_string_opt s with
-                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
-                  | None ->
-                      Stdlib.Result.Error
-                        ("could not parse \"" ^ Stdlib.String.escaped s
-                       ^ "\" as int64")]
-          | [%type: nativeint] | [%type: Nativeint.t] ->
-              [%expr
-                fun (s : string) ->
-                  match Stdlib.Nativeint.of_string_opt s with
-                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
-                  | None ->
-                      Stdlib.Result.Error
-                        ("could not parse \"" ^ Stdlib.String.escaped s
-                       ^ "\" as nativeint")]
-          | [%type: float] ->
-              [%expr
-                fun (s : string) ->
-                  match Stdlib.float_of_string_opt s with
-                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
-                  | None ->
-                      Stdlib.Result.Error
-                        ("could not parse \"" ^ Stdlib.String.escaped s
-                       ^ "\" as float")]
-          | [%type: char] ->
-              [%expr
-                fun (s : string) ->
-                  if Stdlib.String.length s = 1 then Stdlib.Result.Ok s.[0]
-                  else Stdlib.Result.Error "incorrect length for char"]
-          | [%type: string] -> [%expr fun (s : string) -> Result.Ok s]
-          | [%type: [%t? typ] ref] ->
-              [%expr
-                fun (s : string) ->
-                  Stdlib.Result.map ref ([%e parser_of_typ typ] s)]
-          | [%type: [%t? typ] list] ->
-              [%expr
-                fun (s : string) ->
-                  let rec try_map f = function
-                    | x :: xs ->
-                        Stdlib.Result.bind (f x) @@ fun y ->
-                        Stdlib.Result.bind (try_map f xs) @@ fun ys ->
-                        Stdlib.Result.Ok (y :: ys)
-                    | [] -> Stdlib.Result.Ok []
-                  in
-                  try_map [%e parser_of_typ typ]
-                    (Stdlib.String.split_on_char ',' s)]
-          | [%type: [%t? typ] array] ->
-              [%expr
-                fun (s : string) ->
-                  Stdlib.Result.map Stdlib.Array.of_list
-                    ([%e parser_of_typ [%type: [%t typ] list]] s)]
-          | [%type: [%t? typ] option] ->
-              [%expr
-                fun (s : string) ->
-                  Stdlib.Result.map Stdlib.Option.some
-                    ([%e parser_of_typ typ] s)]
-          | [%type: [%t? typ] lazy_t] | [%type: [%t? typ] Lazy.t] ->
-              [%expr
-                fun (s : string) ->
-                  Stdlib.Result.map Stdlib.Lazy.from_val
-                    ([%e parser_of_typ typ] s)]
-          | { ptyp_desc = Ptyp_variant (_, _, _); _ } -> raise TODO
-          | { ptyp_loc; _ } ->
-              raise_errorf ~loc:ptyp_loc "%s cannot be derived for %s" deriver
-                (Ppx_deriving.string_of_core_type typ)
-        in
-        match typ with [%type: bool] -> None | _ -> Some (parser_of_typ typ)
+        match typ with
+        | [%type: bool] -> None
+        | _ -> Some (parser_of_typ loc typ)
       end
   in
   { name; long; short; parser }
+
+type arg = { name : string; placeholder : string; parser : expression }
+
+let arg_of_label_decl quoter name loc typ =
+  let placeholder =
+    Option.value
+      (Attribute.get ct_attr_placeholder typ)
+      ~default:(String.uppercase_ascii name)
+  in
+  let parser =
+    match Attribute.get ct_attr_parser typ with
+    | Some fn -> Ppx_deriving.quote ~quoter fn
+    | None -> parser_of_typ loc typ
+  in
+  { name; placeholder; parser }
+
+let input_of_label_decl quoter
+    { pld_name = { txt = name; _ }; pld_type; pld_attributes; _ } =
+  let loc = !Ast_helper.default_loc in
+  let attrs = pld_type.ptyp_attributes @ pld_attributes in
+  let typ =
+    Ppx_deriving.remove_pervasives ~deriver
+      { pld_type with ptyp_attributes = attrs }
+  in
+  let arg = Attribute.get ct_attr_arg typ in
+  if Option.is_some arg then
+    Either.Right (arg_of_label_decl quoter name loc typ)
+  else Either.Left (flag_of_label_decl quoter name loc typ)
 
 let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
   let quoter = Ppx_deriving.create_quoter () in
@@ -185,7 +207,10 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
     | Ptype_variant _constrs, _ ->
         raise_errorf ~loc "%s does not yet support variant subcommands" deriver
     | Ptype_record labels, _ ->
-        let flags = List.map (flag_of_label_decl quoter) labels in
+        let flags, args =
+          List.partition_map (input_of_label_decl quoter) labels
+        in
+        let arg_prefix = "arg_" in
         let flag_prefix = "flag_" in
         let rhs_case name = function
           | Some parser ->
@@ -263,18 +288,52 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
             [%expr
               Stdlib.Result.Ok
                 [%e
-                  Stdlib.List.map
-                    (fun { name; parser; _ } ->
-                      ( name,
-                        if Stdlib.Option.is_some parser then evar name
-                        else [%expr ![%e evar (flag_prefix ^ name)]] ))
-                    flags
+                  List.map
+                    (fun { name; _ } -> (name, evar (arg_prefix ^ name)))
+                    args
+                  |> List.append
+                       (List.map
+                          (fun ({ name; parser; _ } : flag) ->
+                            ( name,
+                              if Option.is_some parser then evar name
+                              else [%expr ![%e evar (flag_prefix ^ name)]] ))
+                          flags)
                   |> record]]
             flags
+        in
+        let end_args =
+          List.fold_left
+            (fun end_flags { name; placeholder; parser } ->
+              [%expr
+                match args with
+                | v :: args -> begin
+                    match [%e parser] v with
+                    | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
+                        [%e end_flags]
+                    | Error e ->
+                        Stdlib.Result.Error
+                          ("error parsing value for <" ^ [%e str placeholder]
+                         ^ ">: " ^ e)
+                  end
+                | [] ->
+                    Stdlib.Result.Error
+                      ("expected positional argument <" ^ [%e str placeholder]
+                     ^ ">")])
+            [%expr
+              match args with
+              | [] -> [%e end_flags]
+              | s :: _ ->
+                  Stdlib.Result.Error
+                    ("unexpected positional argument \""
+                   ^ Stdlib.String.escaped s ^ "\"")]
+            (List.rev args)
         in
         let body =
           [%expr
             let rec inner = function
+              | s :: ss when s = "--" ->
+                  args := !args @ ss;
+                  Ok ()
               | s :: ss when Stdlib.String.starts_with ~prefix:"--" s -> begin
                   let long =
                     Stdlib.String.sub s 2 (Stdlib.String.length s - 2)
@@ -290,13 +349,18 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                   in
                   [%e handle_short]
                 end
+              | s :: ss ->
+                  args := !args @ [ s ];
+                  inner ss
               | [] -> Ok ()
             in
-            Stdlib.Result.bind (inner args) @@ fun () -> [%e end_flags]]
+            Stdlib.Result.bind (inner arguments) @@ fun () ->
+            let args = !args in
+            [%e end_args]]
         in
         let full_body =
           List.fold_left
-            (fun body { name; parser; _ } ->
+            (fun body ({ name; parser; _ } : flag) ->
               Exp.let_ Nonrecursive
                 [
                   {
@@ -310,9 +374,12 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                   };
                 ]
                 body)
-            body flags
+            [%expr
+              let args = ref [] in
+              [%e body]]
+            flags
         in
-        [%expr fun args -> [%e full_body]]
+        [%expr fun arguments -> [%e full_body]]
     | Ptype_abstract, None ->
         raise_errorf ~loc "%s cannot be derived for fully abstract types"
           deriver
@@ -321,8 +388,8 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
   in
   let parser_with =
     [%expr
-      fun args ->
-        match [%e try_parser_with] args with
+      fun arguments ->
+        match [%e try_parser_with] arguments with
         | Result.Ok x -> x
         | Error e ->
             Printf.eprintf "error: %s\n" e;

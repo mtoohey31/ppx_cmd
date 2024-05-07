@@ -4,7 +4,7 @@ Declarative command line parsing for OCaml with `@@deriving`.
 
 ## TODO
 
-- [ ] Positional arguments (with `--` to separate from flags).
+- [ ] List and optional positional arguments.
 - [ ] Default values.
 - [ ] Help flags (with binary name from build system if possible).
 - [ ] Version flags (with version from build system if possible).
