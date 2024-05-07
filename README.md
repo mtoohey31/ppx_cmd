@@ -9,4 +9,3 @@ Declarative command line parsing for OCaml with `@@deriving`.
 - [ ] Version flags (with version from build system if possible).
 - [ ] Subcommands.
 - [ ] Add documentation to README.
-- [ ] Support `=` between flag and value.

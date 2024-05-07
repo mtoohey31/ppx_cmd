@@ -393,12 +393,24 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                   args := !args @ ss;
                   Ok ()
               | s :: ss when Stdlib.String.starts_with ~prefix:"--" s -> begin
+                  let s, ss =
+                    match Stdlib.String.split_on_char '=' s with
+                    | s :: (_ :: _ as ss') ->
+                        (s, Stdlib.String.concat "=" ss' :: ss)
+                    | _ -> (s, ss)
+                  in
                   let long =
                     Stdlib.String.sub s 2 (Stdlib.String.length s - 2)
                   in
                   [%e handle_long]
                 end
               | s :: ss when Stdlib.String.starts_with ~prefix:"-" s -> begin
+                  let s, ss =
+                    match Stdlib.String.split_on_char '=' s with
+                    | s :: (_ :: _ as ss') ->
+                        (s, Stdlib.String.concat "=" ss' :: ss)
+                    | _ -> (s, ss)
+                  in
                   let length = Stdlib.String.length s in
                   let short, ss =
                     if length > 2 then

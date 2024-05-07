@@ -4,18 +4,21 @@ let show_cmd_result show_cmd = function
   | Ok cmd -> "Ok (" ^ show_cmd cmd ^ ")"
   | Error e -> "Error (" ^ e ^ ")"
 
-type basic = { id : int; name : string [@short 'n'] } [@@deriving cmd, show]
+type basic = { id : int; name : string; [@short 'n'] quiet : bool }
+[@@deriving cmd, show]
 
 let test_basic _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_basic) in
   assert_equal
-    (Ok { id = 7; name = "joe" })
+    (Ok { id = 7; name = "joe"; quiet = false })
     (try_parse_basic_with [ "--id"; "7"; "--name"; "joe" ]);
   assert_equal
-    (Ok { id = -518; name = "bob" })
-    (try_parse_basic_with [ "--id"; "-518"; "-n"; "bob" ]);
+    (Ok { id = -518; name = "bob"; quiet = false })
+    (try_parse_basic_with [ "--id"; "-518"; "-n=bob" ]);
   assert_equal (Error {|no value provided for flag "--name"|})
-    (try_parse_basic_with [ "--id"; "518" ])
+    (try_parse_basic_with [ "--id"; "518" ]);
+  assert_equal (Error {|unexpected positional argument ""|})
+    (try_parse_basic_with [ "--id"; "7"; "--name"; "joe"; "--quiet=" ])
 
 type types = {
   a : int;
@@ -59,8 +62,7 @@ let test_types _ =
        })
     (try_parse_types_with
        [
-         "--a";
-         "5";
+         "--a=5";
          "--b";
          "95";
          "--c";
@@ -69,8 +71,7 @@ let test_types _ =
          "31";
          "--e";
          "1351835";
-         "--f";
-         "-168541";
+         "--f=-168541";
          "--g";
          "-88135125";
          "--h";
@@ -79,8 +80,7 @@ let test_types _ =
          "q";
          "--j";
          "63515";
-         "--k";
-         "abc,xyz";
+         "--k=abc,xyz";
          "--l";
          "foo,bar";
          "--m";
@@ -101,7 +101,7 @@ let test_many_short _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_many_short) in
   assert_equal
     (Ok { foo = true; bar = "baz"; quux = true })
-    (try_parse_many_short_with [ "-fqb"; "baz" ]);
+    (try_parse_many_short_with [ "-fqb=baz" ]);
   assert_equal
     (Ok { foo = false; bar = "baz"; quux = false })
     (try_parse_many_short_with [ "-b"; "baz" ])
@@ -124,7 +124,7 @@ let test_defaults _ =
          key_file = None;
          host = "example.com";
        })
-    (try_parse_defaults_with [ "--password"; "foo"; "example.com" ]);
+    (try_parse_defaults_with [ "--password=foo"; "example.com" ]);
   assert_equal
     (Ok
        {
