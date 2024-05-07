@@ -135,25 +135,41 @@ let test_defaults _ =
        })
     (try_parse_defaults_with [ "--port"; "5681"; "a-key-file"; "example.com" ])
 
-type mv = { src : string; [@arg] dst : string [@arg] } [@@deriving cmd, show]
+type mv = { src : string list; [@arg] [@nonempty] dst : string [@arg] }
+[@@deriving cmd, show]
 
 let test_mv _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_mv) in
   assert_equal
-    (Ok { src = "foo"; dst = "bar" })
-    (try_parse_mv_with [ "foo"; "bar" ]);
-  assert_equal (Error "expected positional argument <SRC>")
+    (Ok { src = [ "foo"; "bar" ]; dst = "baz" })
+    (try_parse_mv_with [ "foo"; "bar"; "baz" ]);
+  assert_equal (Error "expected positional argument <SRC>...")
     (try_parse_mv_with []);
   assert_equal (Error "expected positional argument <DST>")
     (try_parse_mv_with [ "foo" ]);
-  assert_equal (Error {|unexpected positional argument "baz"|})
-    (try_parse_mv_with [ "foo"; "bar"; "baz" ]);
   assert_equal
-    (Ok { src = "--foo"; dst = "--bar" })
+    (Ok { src = [ "--foo" ]; dst = "--bar" })
     (try_parse_mv_with [ "--"; "--foo"; "--bar" ]);
   assert_equal
-    (Ok { src = "foo"; dst = "bar" })
+    (Ok { src = [ "foo" ]; dst = "bar" })
     (try_parse_mv_with [ "foo"; "bar"; "--" ])
+
+type list' = { host : string; [@arg] name : string list [@arg] }
+[@@deriving cmd, show]
+
+let test_list _ =
+  let assert_equal = assert_equal ~printer:(show_cmd_result show_list') in
+  assert_equal (Error "expected positional argument <HOST>")
+    (try_parse_list'_with []);
+  assert_equal
+    (Ok { host = "test-host"; name = [] })
+    (try_parse_list'_with [ "test-host" ]);
+  assert_equal
+    (Ok { host = "test-host"; name = [ "a" ] })
+    (try_parse_list'_with [ "test-host"; "a" ]);
+  assert_equal
+    (Ok { host = "test-host"; name = [ "a"; "b"; "c" ] })
+    (try_parse_list'_with [ "test-host"; "a"; "b"; "c" ])
 
 let suite =
   "Test deriving(cmd)"
@@ -161,8 +177,9 @@ let suite =
          "test_basic" >:: test_basic;
          "test_types" >:: test_types;
          "test_many_short" >:: test_many_short;
-         "test_mv" >:: test_mv;
          "test_defaults" >:: test_defaults;
+         "test_mv" >:: test_mv;
+         "test_list" >:: test_list;
        ]
 
 let _ = run_test_tt_main suite

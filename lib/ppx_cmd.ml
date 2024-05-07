@@ -19,6 +19,9 @@ let ct_attr_default =
     Ast_pattern.(single_expr_payload __)
     (fun e -> e)
 
+let ct_attr_nonempty =
+  Attribute.declare_flag "deriving.cmd.nonempty" Attribute.Context.core_type
+
 let ct_attr_arg =
   Attribute.declare_flag "deriving.cmd.arg" Attribute.Context.core_type
 
@@ -177,11 +180,13 @@ let flag_of_label_decl quoter name loc typ =
   in
   { name; long; short; parser; default }
 
+type arg_details = None | Default of expression | NonemptyList | List
+
 type arg = {
   name : string;
   placeholder : string;
   parser : expression;
-  default : expression option;
+  details : arg_details;
 }
 
 let arg_of_label_decl quoter name loc typ =
@@ -191,16 +196,22 @@ let arg_of_label_decl quoter name loc typ =
       ~default:(String.uppercase_ascii name)
   in
   let parser =
-    match Attribute.get ct_attr_parser typ with
-    | Some fn -> Ppx_deriving.quote ~quoter fn
-    | None -> parser_of_typ loc typ
+    match (Attribute.get ct_attr_parser typ, typ) with
+    | Some fn, _ -> Ppx_deriving.quote ~quoter fn
+    | None, [%type: [%t? typ] list] -> parser_of_typ loc typ
+    | None, _ -> parser_of_typ loc typ
   in
-  let default =
+  let details =
     match (Attribute.get ct_attr_default typ, typ) with
-    | None, [%type: [%t? _] option] -> Some [%expr Stdlib.Option.None]
-    | default, _ -> default
+    | Some default, _ -> Default default
+    | None, [%type: [%t? _] option] -> Default [%expr Stdlib.Option.None]
+    | None, [%type: [%t? _] list] ->
+        if Attribute.get ct_attr_nonempty typ |> Option.is_some then
+          NonemptyList
+        else List
+    | None, _ -> None
   in
-  { name; placeholder; parser; default }
+  { name; placeholder; parser; details }
 
 let input_of_label_decl quoter
     { pld_name = { txt = name; _ }; pld_type; pld_attributes; _ } =
@@ -228,7 +239,7 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
         in
         let () =
           if
-            List.filter (fun { default; _ } -> Option.is_some default) args
+            List.filter (fun { details; _ } -> details != None) args
             |> List.length > 1
           then
             raise_errorf ~loc
@@ -333,29 +344,11 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
         in
         let _, end_args =
           List.fold_left
-            (fun (i, end_flags) { name; placeholder; parser; default } ->
-              match default with
-              | Some default ->
-                  ( i - 1,
-                    [%expr
-                      match args with
-                      | v :: args when List.length args >= [%e int i] -> begin
-                          match [%e parser] v with
-                          | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
-                              [%e end_flags]
-                          | Error e ->
-                              Stdlib.Result.Error
-                                ([%e
-                                   str
-                                     ("error parsing value for [<" ^ placeholder
-                                    ^ ">]: ")]
-                                ^ e)
-                        end
-                      | _ ->
-                          let [%p pvar (arg_prefix ^ name)] = [%e default] in
-                          [%e end_flags]] )
+            (fun (following_args, end_flags)
+                 { name; placeholder; parser; details } ->
+              match details with
               | None ->
-                  ( i - 1,
+                  ( following_args + 1,
                     [%expr
                       match args with
                       | v :: args -> begin
@@ -375,8 +368,105 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                             [%e
                               str
                                 ("expected positional argument <" ^ placeholder
-                               ^ ">")]] ))
-            ( List.length args,
+                               ^ ">")]] )
+              | Default default ->
+                  ( 0,
+                    [%expr
+                      match args with
+                      | v :: args
+                        when Stdlib.List.length args >= [%e int following_args]
+                        -> begin
+                          match [%e parser] v with
+                          | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
+                              [%e end_flags]
+                          | Error e ->
+                              Stdlib.Result.Error
+                                ([%e
+                                   str
+                                     ("error parsing value for [<" ^ placeholder
+                                    ^ ">]: ")]
+                                ^ e)
+                        end
+                      | _ ->
+                          let [%p pvar (arg_prefix ^ name)] = [%e default] in
+                          [%e end_flags]] )
+              | NonemptyList ->
+                  ( 0,
+                    [%expr
+                      if Stdlib.List.length args >= [%e int following_args] then
+                        let rec try_map f = function
+                          | x :: xs ->
+                              Stdlib.Result.bind (f x) @@ fun y ->
+                              Stdlib.Result.bind (try_map f xs) @@ fun ys ->
+                              Stdlib.Result.Ok (y :: ys)
+                          | [] -> Stdlib.Result.Ok []
+                        in
+                        let rec split_at n xs =
+                          match (n, xs) with
+                          | 0, zs -> ([], zs)
+                          | n, y :: xs ->
+                              let ys, zs = split_at (n - 1) xs in
+                              (y :: ys, zs)
+                        in
+                        let vs, args =
+                          split_at
+                            (Stdlib.max 1
+                               (Stdlib.List.length args
+                              - [%e int following_args]))
+                            args
+                        in
+                        match try_map [%e parser] vs with
+                        | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
+                            [%e end_flags]
+                        | Error e ->
+                            Stdlib.Result.Error
+                              ([%e
+                                 str
+                                   ("error parsing value for <" ^ placeholder
+                                  ^ ">...: ")]
+                              ^ e)
+                      else
+                        Stdlib.Result.Error
+                          [%e
+                            str
+                              ("expected positional argument <" ^ placeholder
+                             ^ ">...")]] )
+              | List ->
+                  ( 0,
+                    [%expr
+                      let length = Stdlib.List.length args in
+                      if length >= [%e int following_args] then
+                        let rec try_map f = function
+                          | x :: xs ->
+                              Stdlib.Result.bind (f x) @@ fun y ->
+                              Stdlib.Result.bind (try_map f xs) @@ fun ys ->
+                              Stdlib.Result.Ok (y :: ys)
+                          | [] -> Stdlib.Result.Ok []
+                        in
+                        let rec split_at n xs =
+                          match (n, xs) with
+                          | 0, zs -> ([], zs)
+                          | n, y :: xs ->
+                              let ys, zs = split_at (n - 1) xs in
+                              (y :: ys, zs)
+                        in
+                        let vs, args =
+                          split_at (length - [%e int following_args]) args
+                        in
+                        match try_map [%e parser] vs with
+                        | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
+                            [%e end_flags]
+                        | Error e ->
+                            Stdlib.Result.Error
+                              ([%e
+                                 str
+                                   ("error parsing value for [<" ^ placeholder
+                                  ^ ">...]: ")]
+                              ^ e)
+                      else
+                        let [%p pvar (arg_prefix ^ name)] = [] in
+                        [%e end_flags]] ))
+            ( 0,
               [%expr
                 match args with
                 | [] -> [%e end_flags]
