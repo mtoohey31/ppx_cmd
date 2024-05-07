@@ -4,8 +4,7 @@ let show_cmd_result show_cmd = function
   | Ok cmd -> "Ok (" ^ show_cmd cmd ^ ")"
   | Error e -> "Error (" ^ e ^ ")"
 
-type basic = { id : int; name : string [@short 'n'] }
-[@@deriving cmd, show] [@@warning "-69"]
+type basic = { id : int; name : string [@short 'n'] } [@@deriving cmd, show]
 
 let test_basic _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_basic) in
@@ -35,7 +34,7 @@ type types = {
   n : int64 Lazy.t;
   o : bool;
 }
-[@@deriving cmd, show] [@@warning "-69"]
+[@@deriving cmd, show]
 
 let test_types _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_types) in
@@ -107,8 +106,19 @@ let test_many_short _ =
     (Ok { foo = false; bar = "baz"; quux = false })
     (try_parse_many_short_with [ "-b"; "baz" ])
 
-type mv = { src : string; [@arg] dst : string [@arg] }
-[@@deriving cmd, show] [@@warning "-69"]
+type defaults = { server : string option; port : int [@default 22] }
+[@@deriving cmd, show]
+
+let test_defaults _ =
+  let assert_equal = assert_equal ~printer:(show_cmd_result show_defaults) in
+  assert_equal
+    (Ok { server = Some "foo"; port = 22 })
+    (try_parse_defaults_with [ "--server"; "foo" ]);
+  assert_equal
+    (Ok { server = None; port = 5681 })
+    (try_parse_defaults_with [ "--port"; "5681" ])
+
+type mv = { src : string; [@arg] dst : string [@arg] } [@@deriving cmd, show]
 
 let test_mv _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_mv) in
@@ -135,6 +145,7 @@ let suite =
          "test_types" >:: test_types;
          "test_many_short" >:: test_many_short;
          "test_mv" >:: test_mv;
+         "test_defaults" >:: test_defaults;
        ]
 
 let _ = run_test_tt_main suite

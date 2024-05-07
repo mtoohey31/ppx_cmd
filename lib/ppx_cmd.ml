@@ -155,6 +155,7 @@ type flag = {
   long : string;
   short : char option;
   parser : expression option;
+  default : expression option;
 }
 
 let flag_of_label_decl quoter name loc typ =
@@ -169,9 +170,19 @@ let flag_of_label_decl quoter name loc typ =
         | _ -> Some (parser_of_typ loc typ)
       end
   in
-  { name; long; short; parser }
+  let default =
+    match (Attribute.get ct_attr_default typ, typ) with
+    | None, [%type: [%t? _] option] -> Some [%expr Stdlib.Option.None]
+    | default, _ -> default
+  in
+  { name; long; short; parser; default }
 
-type arg = { name : string; placeholder : string; parser : expression }
+type arg = {
+  name : string;
+  placeholder : string;
+  parser : expression;
+  default : expression option;
+}
 
 let arg_of_label_decl quoter name loc typ =
   let placeholder =
@@ -184,7 +195,8 @@ let arg_of_label_decl quoter name loc typ =
     | Some fn -> Ppx_deriving.quote ~quoter fn
     | None -> parser_of_typ loc typ
   in
-  { name; placeholder; parser }
+  let default = Attribute.get ct_attr_default typ in
+  { name; placeholder; parser; default }
 
 let input_of_label_decl quoter
     { pld_name = { txt = name; _ }; pld_type; pld_attributes; _ } =
@@ -303,7 +315,7 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
         in
         let end_args =
           List.fold_left
-            (fun end_flags { name; placeholder; parser } ->
+            (fun end_flags { name; placeholder; parser; _ } ->
               [%expr
                 match args with
                 | v :: args -> begin
@@ -360,14 +372,17 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
         in
         let full_body =
           List.fold_left
-            (fun body ({ name; parser; _ } : flag) ->
+            (fun body ({ name; parser; default; _ } : flag) ->
               Exp.let_ Nonrecursive
                 [
                   {
                     pvb_pat = pvar (flag_prefix ^ name);
                     pvb_expr =
                       (if Option.is_some parser then
-                         [%expr ref Stdlib.Option.None]
+                         match default with
+                         | Some default ->
+                             [%expr ref (Stdlib.Option.Some [%e default])]
+                         | None -> [%expr ref Stdlib.Option.None]
                        else [%expr ref false]);
                     pvb_attributes = [];
                     pvb_loc = !Ast_helper.default_loc;
