@@ -33,6 +33,7 @@ type types = {
   l : string array;
   m : char option;
   n : int64 Lazy.t;
+  o : bool;
 }
 [@@deriving cmd, show] [@@warning "-69"]
 
@@ -52,9 +53,10 @@ let test_types _ =
          i = 'q';
          j = ref 63515;
          k = [ "abc"; "xyz" ];
-         l = Array.of_list [ "foo"; "bar" ];
+         l = [| "foo"; "bar" |];
          m = Some 'i';
          n = lazy 81631L;
+         o = true;
        })
     (try_parse_types_with
        [
@@ -86,6 +88,7 @@ let test_types _ =
          "i";
          "--n";
          "81631";
+         "--o";
        ])
 
 let suite =

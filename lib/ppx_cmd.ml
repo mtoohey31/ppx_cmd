@@ -58,8 +58,7 @@ type flag = {
   name : string;
   long : string;
   short : char option;
-  type' : core_type;
-  parser : expression;
+  parser : expression option;
 }
 
 let flag_of_label_decl quoter
@@ -72,58 +71,70 @@ let flag_of_label_decl quoter
   in
   let long = Option.value (Attribute.get ct_attr_long typ) ~default:name in
   let short = Attribute.get ct_attr_short typ in
-  let type' = pld_type in
   let parser =
     match Attribute.get ct_attr_parser typ with
-    | Some fn -> Ppx_deriving.quote ~quoter fn
+    | Some fn -> Some (Ppx_deriving.quote ~quoter fn)
     | None -> begin
         let rec parser_of_typ = function
+          | [%type: bool] ->
+              [%expr
+                fun (s : string) ->
+                  match Stdlib.bool_of_string_opt s with
+                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+                  | None ->
+                      Stdlib.Result.Error
+                        ("could not parse \"" ^ Stdlib.String.escaped s
+                       ^ "\" as bool")]
           | [%type: int] ->
               [%expr
                 fun (s : string) ->
                   match Stdlib.int_of_string_opt s with
-                  | Some i -> Stdlib.Result.Ok i
+                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
                   | None ->
-                      Error
-                        ("could not parse \"" ^ String.escaped s ^ "\" as int")]
+                      Stdlib.Result.Error
+                        ("could not parse \"" ^ Stdlib.String.escaped s
+                       ^ "\" as int")]
           | [%type: int32] | [%type: Int32.t] ->
               [%expr
                 fun (s : string) ->
                   match Stdlib.Int32.of_string_opt s with
-                  | Some i -> Stdlib.Result.Ok i
+                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
                   | None ->
-                      Error
-                        ("could not parse \"" ^ String.escaped s ^ "\" as int32")]
+                      Stdlib.Result.Error
+                        ("could not parse \"" ^ Stdlib.String.escaped s
+                       ^ "\" as int32")]
           | [%type: int64] | [%type: Int64.t] ->
               [%expr
                 fun (s : string) ->
                   match Stdlib.Int64.of_string_opt s with
-                  | Some i -> Stdlib.Result.Ok i
+                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
                   | None ->
-                      Error
-                        ("could not parse \"" ^ String.escaped s ^ "\" as int64")]
+                      Stdlib.Result.Error
+                        ("could not parse \"" ^ Stdlib.String.escaped s
+                       ^ "\" as int64")]
           | [%type: nativeint] | [%type: Nativeint.t] ->
               [%expr
                 fun (s : string) ->
                   match Stdlib.Nativeint.of_string_opt s with
-                  | Some i -> Stdlib.Result.Ok i
+                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
                   | None ->
-                      Error
-                        ("could not parse \"" ^ String.escaped s
+                      Stdlib.Result.Error
+                        ("could not parse \"" ^ Stdlib.String.escaped s
                        ^ "\" as nativeint")]
           | [%type: float] ->
               [%expr
                 fun (s : string) ->
                   match Stdlib.float_of_string_opt s with
-                  | Some i -> Stdlib.Result.Ok i
+                  | Stdlib.Option.Some i -> Stdlib.Result.Ok i
                   | None ->
-                      Error
-                        ("could not parse \"" ^ String.escaped s ^ "\" as float")]
+                      Stdlib.Result.Error
+                        ("could not parse \"" ^ Stdlib.String.escaped s
+                       ^ "\" as float")]
           | [%type: char] ->
               [%expr
                 fun (s : string) ->
-                  if String.length s = 1 then Result.Ok s.[0]
-                  else Result.Error "incorrect length for char"]
+                  if Stdlib.String.length s = 1 then Stdlib.Result.Ok s.[0]
+                  else Stdlib.Result.Error "incorrect length for char"]
           | [%type: string] -> [%expr fun (s : string) -> Result.Ok s]
           | [%type: [%t? typ] ref] ->
               [%expr
@@ -144,25 +155,27 @@ let flag_of_label_decl quoter
           | [%type: [%t? typ] array] ->
               [%expr
                 fun (s : string) ->
-                  Stdlib.Result.map Array.of_list
+                  Stdlib.Result.map Stdlib.Array.of_list
                     ([%e parser_of_typ [%type: [%t typ] list]] s)]
           | [%type: [%t? typ] option] ->
               [%expr
                 fun (s : string) ->
-                  Stdlib.Result.map Option.some ([%e parser_of_typ typ] s)]
+                  Stdlib.Result.map Stdlib.Option.some
+                    ([%e parser_of_typ typ] s)]
           | [%type: [%t? typ] lazy_t] | [%type: [%t? typ] Lazy.t] ->
               [%expr
                 fun (s : string) ->
-                  Stdlib.Result.map Lazy.from_val ([%e parser_of_typ typ] s)]
+                  Stdlib.Result.map Stdlib.Lazy.from_val
+                    ([%e parser_of_typ typ] s)]
           | { ptyp_desc = Ptyp_variant (_, _, _); _ } -> raise TODO
           | { ptyp_loc; _ } ->
               raise_errorf ~loc:ptyp_loc "%s cannot be derived for %s" deriver
                 (Ppx_deriving.string_of_core_type typ)
         in
-        parser_of_typ typ
+        match typ with [%type: bool] -> None | _ -> Some (parser_of_typ typ)
       end
   in
-  { name; long; short; type'; parser }
+  { name; long; short; parser }
 
 let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
   let quoter = Ppx_deriving.create_quoter () in
@@ -174,20 +187,34 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
     | Ptype_record labels, _ ->
         let flags = List.map (flag_of_label_decl quoter) labels in
         let flag_prefix = "flag_" in
+        let rhs_case name = function
+          | Some parser ->
+              [%expr
+                match ss with
+                | [] ->
+                    Stdlib.Result.Error
+                      ("expected argument for flag \"" ^ Stdlib.String.escaped s
+                     ^ "\"")
+                | v :: ss -> begin
+                    match [%e parser] v with
+                    | Stdlib.Result.Ok x ->
+                        [%e evar (flag_prefix ^ name)] := Stdlib.Option.Some x;
+                        inner ss
+                    | Error e ->
+                        Stdlib.Result.Error
+                          ("error parsing value for flag \""
+                         ^ Stdlib.String.escaped s ^ "\": " ^ e)
+                  end]
+          | None ->
+              [%expr
+                [%e evar (flag_prefix ^ name)] := true;
+                inner ss]
+        in
         let long_case { name; long; parser; _ } =
           {
             pc_lhs = Pat.constant (Const.string long);
             pc_guard = None;
-            pc_rhs =
-              [%expr
-                match [%e parser] v with
-                | Result.Ok x ->
-                    [%e evar (flag_prefix ^ name)] := Some x;
-                    inner ss
-                | Error e ->
-                    Error
-                      ("error parsing value for flag \"" ^ String.escaped s
-                     ^ "\": " ^ e)];
+            pc_rhs = rhs_case name parser;
           }
         in
         let short_case { name; short; parser; _ } =
@@ -196,16 +223,7 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
               {
                 pc_lhs = Pat.constant (Const.string (String.make 1 short));
                 pc_guard = None;
-                pc_rhs =
-                  [%expr
-                    match [%e parser] v with
-                    | Result.Ok x ->
-                        [%e evar (flag_prefix ^ name)] := Some x;
-                        inner ss
-                    | Error e ->
-                        Error
-                          ("error parsing value for flag \"" ^ String.escaped s
-                         ^ "\": " ^ e)];
+                pc_rhs = rhs_case name parser;
               })
             short
         in
@@ -214,7 +232,9 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
             pc_lhs = pvar "_";
             pc_guard = None;
             pc_rhs =
-              [%expr Error ("unrecognized flag \"" ^ String.escaped s ^ "\"")];
+              [%expr
+                Stdlib.Result.Error
+                  ("unrecognized flag \"" ^ Stdlib.String.escaped s ^ "\"")];
           }
         in
         let handle_long =
@@ -229,43 +249,43 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
         in
         let end_flags =
           List.fold_left
-            (fun end_flags { name; long; _ } ->
-              [%expr
-                match ![%e evar (flag_prefix ^ name)] with
-                | Stdlib.Option.Some [%p pvar name] -> [%e end_flags]
-                | None ->
-                    Error
-                      ("no value provided for flag \""
-                      ^ String.escaped ("--" ^ [%e str long])
-                      ^ "\"")])
+            (fun end_flags { name; long; parser; _ } ->
+              if Option.is_some parser then
+                [%expr
+                  match ![%e evar (flag_prefix ^ name)] with
+                  | Stdlib.Option.Some [%p pvar name] -> [%e end_flags]
+                  | None ->
+                      Stdlib.Result.Error
+                        ("no value provided for flag \""
+                        ^ Stdlib.String.escaped ("--" ^ [%e str long])
+                        ^ "\"")]
+              else end_flags)
             [%expr
               Stdlib.Result.Ok
                 [%e
-                  List.map (fun { name; _ } -> (name, evar name)) flags
+                  Stdlib.List.map
+                    (fun { name; parser; _ } ->
+                      ( name,
+                        if Stdlib.Option.is_some parser then evar name
+                        else [%expr ![%e evar (flag_prefix ^ name)]] ))
+                    flags
                   |> record]]
             flags
         in
-        (* TODO: Can `String` accidentally refer to something defined in the outside scope? *)
         let body =
           [%expr
             let rec inner = function
               | s :: ss when Stdlib.String.starts_with ~prefix:"--" s -> begin
-                  let long = Stdlib.String.sub s 2 (String.length s - 2) in
-                  match ss with
-                  | [] ->
-                      Error
-                        ("expected argument for flag \"" ^ String.escaped s
-                       ^ "\"")
-                  | v :: ss -> [%e handle_long]
+                  let long =
+                    Stdlib.String.sub s 2 (Stdlib.String.length s - 2)
+                  in
+                  [%e handle_long]
                 end
-              | s :: ss when String.starts_with ~prefix:"-" s -> begin
-                  let short = String.sub s 1 (String.length s - 1) in
-                  match ss with
-                  | [] ->
-                      Error
-                        ("expected argument for flag \"" ^ String.escaped s
-                       ^ "\"")
-                  | v :: ss -> [%e handle_short]
+              | s :: ss when Stdlib.String.starts_with ~prefix:"-" s -> begin
+                  let short =
+                    Stdlib.String.sub s 1 (Stdlib.String.length s - 1)
+                  in
+                  [%e handle_short]
                 end
               | [] -> Ok ()
             in
@@ -273,12 +293,15 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
         in
         let full_body =
           List.fold_left
-            (fun body { name; _ } ->
+            (fun body { name; parser; _ } ->
               Exp.let_ Nonrecursive
                 [
                   {
                     pvb_pat = pvar (flag_prefix ^ name);
-                    pvb_expr = [%expr ref None];
+                    pvb_expr =
+                      (if Option.is_some parser then
+                         [%expr ref Stdlib.Option.None]
+                       else [%expr ref false]);
                     pvb_attributes = [];
                     pvb_loc = !Ast_helper.default_loc;
                   };
