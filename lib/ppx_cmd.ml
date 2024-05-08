@@ -40,6 +40,11 @@ let ct_attr_long =
     Ast_pattern.(single_expr_payload (estring __))
     (fun e -> e)
 
+let ct_attr_description =
+  Attribute.declare "deriving.cmd.description" Attribute.Context.core_type
+    Ast_pattern.(single_expr_payload (estring __))
+    (fun e -> e)
+
 let try_with_core_type_of_decl type_decl =
   let loc = !Ast_helper.default_loc in
   let typ = Ppx_deriving.core_type_of_type_decl type_decl in
@@ -159,6 +164,7 @@ type flag = {
   short : char option;
   parser : expression option;
   default : expression option;
+  description : string option;
 }
 
 let flag_of_label_decl quoter name loc typ =
@@ -178,7 +184,8 @@ let flag_of_label_decl quoter name loc typ =
     | None, [%type: [%t? _] option] -> Some [%expr Stdlib.Option.None]
     | default, _ -> default
   in
-  { name; long; short; parser; default }
+  let description = Attribute.get ct_attr_description typ in
+  { name; long; short; parser; default; description }
 
 type arg_details = None | Default of expression | NonemptyList | List
 
@@ -187,6 +194,7 @@ type arg = {
   placeholder : string;
   parser : expression;
   details : arg_details;
+  description : string option;
 }
 
 let arg_of_label_decl quoter name loc typ =
@@ -211,7 +219,8 @@ let arg_of_label_decl quoter name loc typ =
         else List
     | None, _ -> None
   in
-  { name; placeholder; parser; details }
+  let description = Attribute.get ct_attr_description typ in
+  { name; placeholder; parser; details; description }
 
 let input_of_label_decl quoter
     { pld_name = { txt = name; _ }; pld_type; pld_attributes; _ } =
@@ -248,6 +257,83 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                ambiguity"
               deriver
           else ()
+        in
+        let help_string =
+          let flag_info =
+            ("-h, --help", Some "Show this message.")
+            :: List.map
+                 (fun { long; short; description; _ } ->
+                   ( String.concat ", "
+                       (Option.to_list
+                          (Option.map (fun c -> "-" ^ String.make 1 c) short)
+                       @ [ "--" ^ long ]),
+                     description ))
+                 flags
+          in
+          let max_start_length =
+            List.fold_left max min_int
+              (List.map (fun (start, _) -> String.length start) flag_info)
+          in
+          let flag_info_lines =
+            List.map
+              (fun (start, description) ->
+                match description with
+                | Some description ->
+                    "    " ^ start
+                    ^ String.make
+                        (max_start_length - String.length start + 2)
+                        ' '
+                    ^ description
+                | None -> "    " ^ start)
+              flag_info
+          in
+          let arg_info =
+            List.map
+              (fun { placeholder; description; details; _ } ->
+                let placeholder =
+                  match details with
+                  | None -> "<" ^ placeholder ^ ">"
+                  | Default _ -> "[<" ^ placeholder ^ ">]"
+                  | NonemptyList -> "<" ^ placeholder ^ ">..."
+                  | List -> "[<" ^ placeholder ^ ">...]"
+                in
+                (placeholder, description))
+              args
+          in
+          let max_placeholder_length =
+            List.fold_left max min_int
+              (List.map
+                 (fun (placeholder, _) -> String.length placeholder)
+                 arg_info)
+          in
+          let arg_info_lines =
+            List.map
+              (fun (placeholder, description) ->
+                match description with
+                | Some description ->
+                    "    " ^ placeholder
+                    ^ String.make
+                        (max_placeholder_length - String.length placeholder + 2)
+                        ' '
+                    ^ description
+                | None -> "    " ^ placeholder)
+              arg_info
+          in
+          [%expr
+            "Usage: " ^ Sys.argv.(0)
+            ^ [%e
+                str
+                  ({|
+
+Options:
+|}
+                  ^ String.concat "\n" flag_info_lines
+                  ^
+                  if List.is_empty args then ""
+                  else {|
+
+Arguments:
+|} ^ String.concat "\n" arg_info_lines)]]
         in
         let arg_prefix = "arg_" in
         let flag_prefix = "flag_" in
@@ -291,6 +377,25 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
               })
             short
         in
+        let rhs_help =
+          [%expr
+            Stdlib.print_endline [%e help_string];
+            Stdlib.exit 0]
+        in
+        let long_help_case =
+          {
+            pc_lhs = Pat.constant (Const.string "help");
+            pc_guard = None;
+            pc_rhs = rhs_help;
+          }
+        in
+        let short_help_case =
+          {
+            pc_lhs = Pat.constant (Const.char 'h');
+            pc_guard = None;
+            pc_rhs = rhs_help;
+          }
+        in
         let unrecognized_case =
           {
             pc_lhs = pvar "_";
@@ -303,12 +408,12 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
         in
         let handle_long =
           List.map long_case flags
-          |> (Fun.flip List.append) [ unrecognized_case ]
+          |> (Fun.flip List.append) [ long_help_case; unrecognized_case ]
           |> Exp.match_ (evar "long")
         in
         let handle_short =
           List.filter_map short_case flags
-          |> (Fun.flip List.append) [ unrecognized_case ]
+          |> (Fun.flip List.append) [ short_help_case; unrecognized_case ]
           |> Exp.match_ (evar "short")
         in
         let end_flags =
@@ -345,7 +450,7 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
         let _, end_args =
           List.fold_left
             (fun (following_args, end_flags)
-                 { name; placeholder; parser; details } ->
+                 { name; placeholder; parser; details; _ } ->
               match details with
               | None ->
                   ( following_args + 1,
