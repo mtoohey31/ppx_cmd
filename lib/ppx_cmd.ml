@@ -70,6 +70,45 @@ let sig_of_type type_decl =
          (core_type_of_decl type_decl));
   ]
 
+let rec take_while f = function
+  | [] -> ([], [])
+  | y :: xs when f y ->
+      let ys, zs = take_while f xs in
+      (y :: ys, zs)
+  | zs -> ([], zs)
+
+let is_uppercase_ascii c = 'A' <= c && c <= 'Z'
+let is_lowercase_ascii c = 'a' <= c && c <= 'z'
+
+let rec unsnoc = function
+  | [ x; last ] -> Some ([ x ], last)
+  | x :: xs -> Option.map (fun (xs, last) -> (x :: xs, last)) (unsnoc xs)
+  | _ -> None
+
+let pascal_case_to_snake s =
+  let cs = String.to_seq s |> List.of_seq in
+  let rec split_words = function
+    | [] -> []
+    | cs -> begin
+        let uppers, rest = take_while is_uppercase_ascii cs in
+        assert (uppers != []);
+        match unsnoc uppers with
+        | Some (uppers, r) ->
+            assert (uppers != []);
+            let rest_words = split_words (r :: rest) in
+            uppers :: rest_words
+        | None ->
+            assert (uppers != []);
+            let lowers, rest = take_while is_lowercase_ascii rest in
+            let rest_words = split_words rest in
+            (uppers @ lowers) :: rest_words
+      end
+  in
+  split_words cs
+  |> List.map (fun cs ->
+         List.to_seq cs |> String.of_seq |> String.lowercase_ascii)
+  |> String.concat "_"
+
 let rec parser_of_typ loc = function
   | [%type: bool] ->
       [%expr
@@ -153,7 +192,34 @@ let rec parser_of_typ loc = function
       [%expr
         fun (s : string) ->
           Stdlib.Result.map Stdlib.Lazy.from_val ([%e parser_of_typ loc typ] s)]
-  | { ptyp_desc = Ptyp_variant (_, _, _); _ } -> raise TODO
+  | { ptyp_loc; ptyp_desc = Ptyp_variant (fields, Closed, None); _ } as typ ->
+      let string_and_case = function
+        | { prf_desc = Rtag ({ txt = name; _ }, _, []); _ } ->
+            let snake = pascal_case_to_snake name in
+            ( "\"" ^ String.escaped snake ^ "\"",
+              {
+                pc_lhs = Pat.constant (Const.string snake);
+                pc_guard = None;
+                pc_rhs = [%expr Stdlib.Result.Ok [%e Exp.variant name None]];
+              } )
+        | _ ->
+            raise_errorf ~loc:ptyp_loc "%s cannot be derived for %s" deriver
+              (Ppx_deriving.string_of_core_type typ)
+      in
+      let strings, cases = List.split (List.map string_and_case fields) in
+      let invalid_case =
+        {
+          pc_lhs = pvar "s";
+          pc_guard = None;
+          pc_rhs =
+            [%expr
+              Stdlib.Result.Error
+                ("invalid value \"" ^ String.escaped s
+                ^ [%e str ("\", expected one of " ^ String.concat ", " strings)]
+                )];
+        }
+      in
+      List.append cases [ invalid_case ] |> Exp.function_
   | { ptyp_loc; _ } as typ ->
       raise_errorf ~loc:ptyp_loc "%s cannot be derived for %s" deriver
         (Ppx_deriving.string_of_core_type typ)

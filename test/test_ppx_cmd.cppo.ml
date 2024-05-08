@@ -36,6 +36,7 @@ type types = {
   m : char option;
   n : int64 Lazy.t;
   o : bool;
+  p : [ `Foo | `Bar ];
 }
 [@@deriving cmd, show]
 
@@ -59,6 +60,7 @@ let test_types _ =
          m = Some 'i';
          n = lazy 81631L;
          o = true;
+         p = `Foo;
        })
     (try_parse_types_with
        [
@@ -88,6 +90,8 @@ let test_types _ =
          "--n";
          "81631";
          "--o";
+         "--p";
+         "foo";
        ])
 
 type many_short = {
@@ -171,6 +175,25 @@ let test_list _ =
     (Ok { host = "test-host"; name = [ "a"; "b"; "c" ] })
     (try_parse_list'_with [ "test-host"; "a"; "b"; "c" ])
 
+type variants = { flag : [ `Foo | `DBBar | `DBBazDBQuux ] }
+[@@deriving cmd, show]
+
+let test_variants _ =
+  let assert_equal = assert_equal ~printer:(show_cmd_result show_variants) in
+  assert_equal
+    (Error
+       {|error parsing value for flag "--flag": invalid value "quux", expected one of "foo", "db_bar", "db_baz_db_quux"|})
+    (try_parse_variants_with [ "--flag"; "quux" ]);
+  assert_equal
+    (Ok { flag = `Foo })
+    (try_parse_variants_with [ "--flag"; "foo" ]);
+  assert_equal
+    (Ok { flag = `DBBar })
+    (try_parse_variants_with [ "--flag=db_bar" ]);
+  assert_equal
+    (Ok { flag = `DBBazDBQuux })
+    (try_parse_variants_with [ "--flag"; "db_baz_db_quux" ])
+
 let suite =
   "Test deriving(cmd)"
   >::: [
@@ -180,6 +203,7 @@ let suite =
          "test_defaults" >:: test_defaults;
          "test_mv" >:: test_mv;
          "test_list" >:: test_list;
+         "test_variants" >:: test_variants;
        ]
 
 let _ = run_test_tt_main suite
