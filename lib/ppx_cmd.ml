@@ -192,6 +192,12 @@ let rec parser_of_typ loc = function
       [%expr
         fun (s : string) ->
           Stdlib.Result.map Stdlib.Lazy.from_val ([%e parser_of_typ loc typ] s)]
+  | { ptyp_desc = Ptyp_constr ({ txt = lid; _ }, args); _ } as _typ ->
+      app
+        (Exp.ident
+           (mknoloc
+              (Ppx_deriving.mangle_lid (`PrefixSuffix ("parse", "value")) lid)))
+        (List.map (parser_of_typ loc) args)
   | { ptyp_loc; ptyp_desc = Ptyp_variant (fields, Closed, None); _ } as typ ->
       let string_and_case = function
         | { prf_desc = Rtag ({ txt = name; _ }, _, []); _ } ->
@@ -786,3 +792,122 @@ let intf_generator =
 let deriving : Deriving.t =
   Deriving.add deriver ~str_type_decl:impl_generator
     ~sig_type_decl:intf_generator
+
+let deriver = "cmd_value"
+
+let value_core_type_of_decl type_decl =
+  let loc = !Ast_helper.default_loc in
+  let typ = Ppx_deriving.core_type_of_type_decl type_decl in
+  [%type:
+    Ppx_deriving_runtime.string ->
+    ([%t typ], Ppx_deriving_runtime.string) Ppx_deriving_runtime.Result.t]
+
+let value_sig_of_type type_decl =
+  [
+    Sig.value
+      (Val.mk
+         (mknoloc
+            (Ppx_deriving.mangle_type_decl
+               (`PrefixSuffix ("parse", "value"))
+               type_decl))
+         (value_core_type_of_decl type_decl));
+  ]
+
+let parser_of_label_decl { pld_type; pld_attributes; _ } =
+  let loc = !Ast_helper.default_loc in
+  let attrs = pld_type.ptyp_attributes @ pld_attributes in
+  let typ =
+    Ppx_deriving.remove_pervasives ~deriver
+      { pld_type with ptyp_attributes = attrs }
+  in
+  parser_of_typ loc typ
+
+let value_str_of_type ({ ptype_loc = loc; _ } as type_decl) =
+  let quoter = Ppx_deriving.create_quoter () in
+  let value_parser =
+    match (type_decl.ptype_kind, type_decl.ptype_manifest) with
+    | Ptype_abstract, Some manifest -> parser_of_typ loc manifest
+    | Ptype_variant constrs, _ ->
+        let string_and_case = function
+          | {
+              pcd_name = { txt = name; _ };
+              pcd_vars = [];
+              pcd_args = Pcstr_tuple [];
+              pcd_res = None;
+              _;
+            } ->
+              let snake = pascal_case_to_snake name in
+              ( "\"" ^ String.escaped snake ^ "\"",
+                {
+                  pc_lhs = Pat.constant (Const.string snake);
+                  pc_guard = None;
+                  pc_rhs =
+                    [%expr
+                      Stdlib.Result.Ok
+                        [%e Exp.construct (mknoloc (Lident name)) None]];
+                } )
+          | _ ->
+              raise_errorf ~loc
+                "%s cannot be derived for variants with vars, args, or a res"
+                deriver
+        in
+
+        let strings, cases = List.split (List.map string_and_case constrs) in
+        let invalid_case =
+          {
+            pc_lhs = pvar "s";
+            pc_guard = None;
+            pc_rhs =
+              [%expr
+                Stdlib.Result.Error
+                  ("invalid value \"" ^ String.escaped s
+                  ^ [%e
+                      str ("\", expected one of " ^ String.concat ", " strings)]
+                  )];
+          }
+        in
+        List.append cases [ invalid_case ] |> Exp.function_
+    | Ptype_record _, _ ->
+        raise_errorf ~loc "%s cannot be derived for record types" deriver
+    | Ptype_abstract, None ->
+        raise_errorf ~loc "%s cannot be derived for fully abstract types"
+          deriver
+    | Ptype_open, _ ->
+        raise_errorf ~loc "%s cannot be derived for open types" deriver
+  in
+  let eta_expand expr =
+    (* Ensure expr is statically constructive by eta-expanding non-funs.
+       See https://github.com/ocaml-ppx/ppx_deriving/pull/252. *)
+    match expr with
+    | { pexp_desc = Pexp_fun _; _ } -> expr
+    | _ -> [%expr fun x -> [%e expr] x]
+  in
+  let value_out_type =
+    Ppx_deriving.strong_type_of_type @@ value_core_type_of_decl type_decl
+  in
+  let parse_value_var =
+    pvar
+      (Ppx_deriving.mangle_type_decl
+         (`PrefixSuffix ("parse", "value"))
+         type_decl)
+  in
+  [
+    Vb.mk
+      (Pat.constraint_ parse_value_var value_out_type)
+      (Ppx_deriving.sanitize ~quoter (eta_expand value_parser));
+  ]
+
+let value_impl_generator =
+  Deriving.Generator.V2.make_noarg (fun ~ctxt:_ (_, type_decls) ->
+      [
+        Str.value Nonrecursive
+          (List.concat (List.map value_str_of_type type_decls));
+      ])
+
+let value_intf_generator =
+  Deriving.Generator.V2.make_noarg (fun ~ctxt:_ (_, type_decls) ->
+      List.concat (List.map value_sig_of_type type_decls))
+
+let deriving_value : Deriving.t =
+  Deriving.add deriver ~str_type_decl:value_impl_generator
+    ~sig_type_decl:value_intf_generator

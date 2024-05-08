@@ -175,24 +175,26 @@ let test_list _ =
     (Ok { host = "test-host"; name = [ "a"; "b"; "c" ] })
     (try_parse_list'_with [ "test-host"; "a"; "b"; "c" ])
 
-type variants = { flag : [ `Foo | `DBBar | `DBBazDBQuux ] }
+type variant_flag = Foo | DBBar | DBBazDBQuux [@@deriving cmd_value, show]
+
+type variants = {
+  flag1 : [ `Foo | `DBBar | `DBBazDBQuux ];
+  flag2 : variant_flag;
+}
 [@@deriving cmd, show]
 
 let test_variants _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_variants) in
   assert_equal
     (Error
-       {|error parsing value for flag "--flag": invalid value "quux", expected one of "foo", "db_bar", "db_baz_db_quux"|})
-    (try_parse_variants_with [ "--flag"; "quux" ]);
+       {|error parsing value for flag "--flag1": invalid value "quux", expected one of "foo", "db_bar", "db_baz_db_quux"|})
+    (try_parse_variants_with [ "--flag1"; "quux"; "--flag2"; "foo" ]);
   assert_equal
-    (Ok { flag = `Foo })
-    (try_parse_variants_with [ "--flag"; "foo" ]);
+    (Ok { flag1 = `Foo; flag2 = DBBar })
+    (try_parse_variants_with [ "--flag1"; "foo"; "--flag2=db_bar" ]);
   assert_equal
-    (Ok { flag = `DBBar })
-    (try_parse_variants_with [ "--flag=db_bar" ]);
-  assert_equal
-    (Ok { flag = `DBBazDBQuux })
-    (try_parse_variants_with [ "--flag"; "db_baz_db_quux" ])
+    (Ok { flag1 = `DBBazDBQuux; flag2 = Foo })
+    (try_parse_variants_with [ "--flag1"; "db_baz_db_quux"; "--flag2"; "foo" ])
 
 let suite =
   "Test deriving(cmd)"
