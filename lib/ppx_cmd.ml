@@ -113,57 +113,49 @@ let rec parser_of_typ loc = function
   | [%type: bool] ->
       [%expr
         fun (s : string) ->
-          match Stdlib.bool_of_string_opt s with
-          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          match bool_of_string_opt s with
+          | Some i -> Ok i
           | None ->
-              Stdlib.Result.Error
-                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as bool")]
+              Error ("could not parse \"" ^ String.escaped s ^ "\" as bool")]
   | [%type: int] ->
       [%expr
         fun (s : string) ->
-          match Stdlib.int_of_string_opt s with
-          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
-          | None ->
-              Stdlib.Result.Error
-                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as int")]
+          match int_of_string_opt s with
+          | Some i -> Ok i
+          | None -> Error ("could not parse \"" ^ String.escaped s ^ "\" as int")]
   | [%type: int32] | [%type: Int32.t] ->
       [%expr
         fun (s : string) ->
-          match Stdlib.Int32.of_string_opt s with
-          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          match Int32.of_string_opt s with
+          | Some i -> Ok i
           | None ->
-              Stdlib.Result.Error
-                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as int32")]
+              Error ("could not parse \"" ^ String.escaped s ^ "\" as int32")]
   | [%type: int64] | [%type: Int64.t] ->
       [%expr
         fun (s : string) ->
-          match Stdlib.Int64.of_string_opt s with
-          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          match Int64.of_string_opt s with
+          | Some i -> Ok i
           | None ->
-              Stdlib.Result.Error
-                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as int64")]
+              Error ("could not parse \"" ^ String.escaped s ^ "\" as int64")]
   | [%type: nativeint] | [%type: Nativeint.t] ->
       [%expr
         fun (s : string) ->
-          match Stdlib.Nativeint.of_string_opt s with
-          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          match Nativeint.of_string_opt s with
+          | Some i -> Ok i
           | None ->
-              Stdlib.Result.Error
-                ("could not parse \"" ^ Stdlib.String.escaped s
-               ^ "\" as nativeint")]
+              Error ("could not parse \"" ^ String.escaped s ^ "\" as nativeint")]
   | [%type: float] ->
       [%expr
         fun (s : string) ->
-          match Stdlib.float_of_string_opt s with
-          | Stdlib.Option.Some i -> Stdlib.Result.Ok i
+          match float_of_string_opt s with
+          | Some i -> Ok i
           | None ->
-              Stdlib.Result.Error
-                ("could not parse \"" ^ Stdlib.String.escaped s ^ "\" as float")]
+              Error ("could not parse \"" ^ String.escaped s ^ "\" as float")]
   | [%type: char] ->
       [%expr
         fun (s : string) ->
-          if Stdlib.String.length s = 1 then Stdlib.Result.Ok s.[0]
-          else Stdlib.Result.Error "incorrect length for char"]
+          if String.length s = 1 then Ok s.[0]
+          else Error "incorrect length for char"]
   | [%type: string] -> [%expr fun (s : string) -> Result.Ok s]
   | [%type: [%t? typ] ref] ->
       [%expr
@@ -174,24 +166,23 @@ let rec parser_of_typ loc = function
           let rec try_map f = function
             | x :: xs ->
                 Stdlib.Result.bind (f x) @@ fun y ->
-                Stdlib.Result.bind (try_map f xs) @@ fun ys ->
-                Stdlib.Result.Ok (y :: ys)
-            | [] -> Stdlib.Result.Ok []
+                Stdlib.Result.bind (try_map f xs) @@ fun ys -> Ok (y :: ys)
+            | [] -> Ok []
           in
-          try_map [%e parser_of_typ loc typ] (Stdlib.String.split_on_char ',' s)]
+          try_map [%e parser_of_typ loc typ] (String.split_on_char ',' s)]
   | [%type: [%t? typ] array] ->
       [%expr
         fun (s : string) ->
-          Stdlib.Result.map Stdlib.Array.of_list
+          Stdlib.Result.map Array.of_list
             ([%e parser_of_typ loc [%type: [%t typ] list]] s)]
   | [%type: [%t? typ] option] ->
       [%expr
         fun (s : string) ->
-          Stdlib.Result.map Stdlib.Option.some ([%e parser_of_typ loc typ] s)]
+          Stdlib.Result.map Option.some ([%e parser_of_typ loc typ] s)]
   | [%type: [%t? typ] lazy_t] | [%type: [%t? typ] Lazy.t] ->
       [%expr
         fun (s : string) ->
-          Stdlib.Result.map Stdlib.Lazy.from_val ([%e parser_of_typ loc typ] s)]
+          Stdlib.Result.map Lazy.from_val ([%e parser_of_typ loc typ] s)]
   | { ptyp_desc = Ptyp_constr ({ txt = lid; _ }, args); _ } as _typ ->
       app
         (Exp.ident
@@ -206,7 +197,7 @@ let rec parser_of_typ loc = function
               {
                 pc_lhs = Pat.constant (Const.string snake);
                 pc_guard = None;
-                pc_rhs = [%expr Stdlib.Result.Ok [%e Exp.variant name None]];
+                pc_rhs = [%expr Ok [%e Exp.variant name None]];
               } )
         | _ ->
             raise_errorf ~loc:ptyp_loc "%s cannot be derived for %s" deriver
@@ -219,7 +210,7 @@ let rec parser_of_typ loc = function
           pc_guard = None;
           pc_rhs =
             [%expr
-              Stdlib.Result.Error
+              Error
                 ("invalid value \"" ^ String.escaped s
                 ^ [%e str ("\", expected one of " ^ String.concat ", " strings)]
                 )];
@@ -253,7 +244,7 @@ let flag_of_label_decl quoter name loc typ =
   in
   let default =
     match (Attribute.get ct_attr_default typ, typ) with
-    | None, [%type: [%t? _] option] -> Some [%expr Stdlib.Option.None]
+    | None, [%type: [%t? _] option] -> Some [%expr None]
     | default, _ -> default
   in
   let description = Attribute.get ct_attr_description typ in
@@ -284,7 +275,7 @@ let arg_of_label_decl quoter name loc typ =
   let details =
     match (Attribute.get ct_attr_default typ, typ) with
     | Some default, _ -> Default default
-    | None, [%type: [%t? _] option] -> Default [%expr Stdlib.Option.None]
+    | None, [%type: [%t? _] option] -> Default [%expr None]
     | None, [%type: [%t? _] list] ->
         if Attribute.get ct_attr_nonempty typ |> Option.is_some then
           NonemptyList
@@ -414,18 +405,17 @@ Arguments:
               [%expr
                 match ss with
                 | [] ->
-                    Stdlib.Result.Error
-                      ("expected argument for flag \"" ^ Stdlib.String.escaped s
-                     ^ "\"")
+                    Error
+                      ("expected argument for flag \"" ^ String.escaped s ^ "\"")
                 | v :: ss -> begin
                     match [%e parser] v with
-                    | Stdlib.Result.Ok x ->
-                        [%e evar (flag_prefix ^ name)] := Stdlib.Option.Some x;
+                    | Ok x ->
+                        [%e evar (flag_prefix ^ name)] := Some x;
                         inner ss
                     | Error e ->
-                        Stdlib.Result.Error
-                          ("error parsing value for flag \""
-                         ^ Stdlib.String.escaped s ^ "\": " ^ e)
+                        Error
+                          ("error parsing value for flag \"" ^ String.escaped s
+                         ^ "\": " ^ e)
                   end]
           | None ->
               [%expr
@@ -451,8 +441,8 @@ Arguments:
         in
         let rhs_help =
           [%expr
-            Stdlib.print_endline [%e help_string];
-            Stdlib.exit 0]
+            print_endline [%e help_string];
+            exit 0]
         in
         let long_help_case =
           {
@@ -473,9 +463,7 @@ Arguments:
             pc_lhs = pvar "_";
             pc_guard = None;
             pc_rhs =
-              [%expr
-                Stdlib.Result.Error
-                  ("unrecognized flag \"" ^ Stdlib.String.escaped s ^ "\"")];
+              [%expr Error ("unrecognized flag \"" ^ String.escaped s ^ "\"")];
           }
         in
         let handle_long =
@@ -494,17 +482,17 @@ Arguments:
               if Option.is_some parser then
                 [%expr
                   match ![%e evar (flag_prefix ^ name)] with
-                  | Stdlib.Option.Some [%p pvar name] -> [%e end_flags]
+                  | Some [%p pvar name] -> [%e end_flags]
                   | None ->
-                      Stdlib.Result.Error
+                      Error
                         [%e
                           str
                             ("no value provided for flag \""
-                            ^ Stdlib.String.escaped ("--" ^ long)
+                            ^ String.escaped ("--" ^ long)
                             ^ "\"")]]
               else end_flags)
             [%expr
-              Stdlib.Result.Ok
+              Ok
                 [%e
                   List.map
                     (fun { name; _ } -> (name, evar (arg_prefix ^ name)))
@@ -530,10 +518,9 @@ Arguments:
                       match args with
                       | v :: args -> begin
                           match [%e parser] v with
-                          | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
-                              [%e end_flags]
+                          | Ok [%p pvar (arg_prefix ^ name)] -> [%e end_flags]
                           | Error e ->
-                              Stdlib.Result.Error
+                              Error
                                 ([%e
                                    str
                                      ("error parsing value for <" ^ placeholder
@@ -541,7 +528,7 @@ Arguments:
                                 ^ e)
                         end
                       | [] ->
-                          Stdlib.Result.Error
+                          Error
                             [%e
                               str
                                 ("expected positional argument <" ^ placeholder
@@ -551,13 +538,12 @@ Arguments:
                     [%expr
                       match args with
                       | v :: args
-                        when Stdlib.List.length args >= [%e int following_args]
-                        -> begin
+                        when List.length args >= [%e int following_args] ->
+                        begin
                           match [%e parser] v with
-                          | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
-                              [%e end_flags]
+                          | Ok [%p pvar (arg_prefix ^ name)] -> [%e end_flags]
                           | Error e ->
-                              Stdlib.Result.Error
+                              Error
                                 ([%e
                                    str
                                      ("error parsing value for [<" ^ placeholder
@@ -570,13 +556,13 @@ Arguments:
               | NonemptyList ->
                   ( 0,
                     [%expr
-                      if Stdlib.List.length args >= [%e int following_args] then
+                      if List.length args >= [%e int following_args] then
                         let rec try_map f = function
                           | x :: xs ->
                               Stdlib.Result.bind (f x) @@ fun y ->
                               Stdlib.Result.bind (try_map f xs) @@ fun ys ->
-                              Stdlib.Result.Ok (y :: ys)
-                          | [] -> Stdlib.Result.Ok []
+                              Ok (y :: ys)
+                          | [] -> Ok []
                         in
                         let rec split_at n xs =
                           match (n, xs) with
@@ -587,23 +573,20 @@ Arguments:
                         in
                         let vs, args =
                           split_at
-                            (Stdlib.max 1
-                               (Stdlib.List.length args
-                              - [%e int following_args]))
+                            (max 1 (List.length args - [%e int following_args]))
                             args
                         in
                         match try_map [%e parser] vs with
-                        | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
-                            [%e end_flags]
+                        | Ok [%p pvar (arg_prefix ^ name)] -> [%e end_flags]
                         | Error e ->
-                            Stdlib.Result.Error
+                            Error
                               ([%e
                                  str
                                    ("error parsing value for <" ^ placeholder
                                   ^ ">...: ")]
                               ^ e)
                       else
-                        Stdlib.Result.Error
+                        Error
                           [%e
                             str
                               ("expected positional argument <" ^ placeholder
@@ -611,14 +594,14 @@ Arguments:
               | List ->
                   ( 0,
                     [%expr
-                      let length = Stdlib.List.length args in
+                      let length = List.length args in
                       if length >= [%e int following_args] then
                         let rec try_map f = function
                           | x :: xs ->
                               Stdlib.Result.bind (f x) @@ fun y ->
                               Stdlib.Result.bind (try_map f xs) @@ fun ys ->
-                              Stdlib.Result.Ok (y :: ys)
-                          | [] -> Stdlib.Result.Ok []
+                              Ok (y :: ys)
+                          | [] -> Ok []
                         in
                         let rec split_at n xs =
                           match (n, xs) with
@@ -631,10 +614,9 @@ Arguments:
                           split_at (length - [%e int following_args]) args
                         in
                         match try_map [%e parser] vs with
-                        | Stdlib.Result.Ok [%p pvar (arg_prefix ^ name)] ->
-                            [%e end_flags]
+                        | Ok [%p pvar (arg_prefix ^ name)] -> [%e end_flags]
                         | Error e ->
-                            Stdlib.Result.Error
+                            Error
                               ([%e
                                  str
                                    ("error parsing value for [<" ^ placeholder
@@ -648,9 +630,9 @@ Arguments:
                 match args with
                 | [] -> [%e end_flags]
                 | s :: _ ->
-                    Stdlib.Result.Error
-                      ("unexpected positional argument \""
-                     ^ Stdlib.String.escaped s ^ "\"")] )
+                    Error
+                      ("unexpected positional argument \"" ^ String.escaped s
+                     ^ "\"")] )
             (List.rev args)
         in
         let body =
@@ -659,29 +641,25 @@ Arguments:
               | s :: ss when s = "--" ->
                   args := !args @ ss;
                   Ok ()
-              | s :: ss when Stdlib.String.starts_with ~prefix:"--" s -> begin
+              | s :: ss when String.starts_with ~prefix:"--" s -> begin
                   let s, ss =
-                    match Stdlib.String.split_on_char '=' s with
-                    | s :: (_ :: _ as ss') ->
-                        (s, Stdlib.String.concat "=" ss' :: ss)
+                    match String.split_on_char '=' s with
+                    | s :: (_ :: _ as ss') -> (s, String.concat "=" ss' :: ss)
                     | _ -> (s, ss)
                   in
-                  let long =
-                    Stdlib.String.sub s 2 (Stdlib.String.length s - 2)
-                  in
+                  let long = String.sub s 2 (String.length s - 2) in
                   [%e handle_long]
                 end
-              | s :: ss when Stdlib.String.starts_with ~prefix:"-" s -> begin
+              | s :: ss when String.starts_with ~prefix:"-" s -> begin
                   let s, ss =
-                    match Stdlib.String.split_on_char '=' s with
-                    | s :: (_ :: _ as ss') ->
-                        (s, Stdlib.String.concat "=" ss' :: ss)
+                    match String.split_on_char '=' s with
+                    | s :: (_ :: _ as ss') -> (s, String.concat "=" ss' :: ss)
                     | _ -> (s, ss)
                   in
-                  let length = Stdlib.String.length s in
+                  let length = String.length s in
                   let short, ss =
                     if length > 2 then
-                      (s.[1], ("-" ^ Stdlib.String.sub s 2 (length - 2)) :: ss)
+                      (s.[1], ("-" ^ String.sub s 2 (length - 2)) :: ss)
                     else (s.[1], ss)
                   in
                   [%e handle_short]
@@ -705,9 +683,8 @@ Arguments:
                     pvb_expr =
                       (if Option.is_some parser then
                          match default with
-                         | Some default ->
-                             [%expr ref (Stdlib.Option.Some [%e default])]
-                         | None -> [%expr ref Stdlib.Option.None]
+                         | Some default -> [%expr ref (Some [%e default])]
+                         | None -> [%expr ref None]
                        else [%expr ref false]);
                     pvb_attributes = [];
                     pvb_loc = !Ast_helper.default_loc;
@@ -842,9 +819,7 @@ let value_str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                   pc_lhs = Pat.constant (Const.string snake);
                   pc_guard = None;
                   pc_rhs =
-                    [%expr
-                      Stdlib.Result.Ok
-                        [%e Exp.construct (mknoloc (Lident name)) None]];
+                    [%expr Ok [%e Exp.construct (mknoloc (Lident name)) None]];
                 } )
           | _ ->
               raise_errorf ~loc
@@ -859,7 +834,7 @@ let value_str_of_type ({ ptype_loc = loc; _ } as type_decl) =
             pc_guard = None;
             pc_rhs =
               [%expr
-                Stdlib.Result.Error
+                Error
                   ("invalid value \"" ^ String.escaped s
                   ^ [%e
                       str ("\", expected one of " ^ String.concat ", " strings)]
