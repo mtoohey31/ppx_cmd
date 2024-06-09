@@ -12,12 +12,12 @@ let raise_errorf = Ppx_deriving.raise_errorf
 let ct_attr_parser =
   Attribute.declare "deriving.cmd.parser" Attribute.Context.core_type
     Ast_pattern.(single_expr_payload __)
-    (fun e -> e)
+    Fun.id
 
 let ct_attr_default =
   Attribute.declare "deriving.cmd.default" Attribute.Context.core_type
     Ast_pattern.(single_expr_payload __)
-    (fun e -> e)
+    Fun.id
 
 let ct_attr_nonempty =
   Attribute.declare_flag "deriving.cmd.nonempty" Attribute.Context.core_type
@@ -28,22 +28,22 @@ let ct_attr_arg =
 let ct_attr_placeholder =
   Attribute.declare "deriving.cmd.placeholder" Attribute.Context.core_type
     Ast_pattern.(single_expr_payload (estring __))
-    (fun e -> e)
+    Fun.id
 
 let ct_attr_short =
   Attribute.declare "deriving.cmd.short" Attribute.Context.core_type
     Ast_pattern.(single_expr_payload (echar __))
-    (fun e -> e)
+    Fun.id
 
 let ct_attr_long =
   Attribute.declare "deriving.cmd.long" Attribute.Context.core_type
     Ast_pattern.(single_expr_payload (estring __))
-    (fun e -> e)
+    Fun.id
 
 let ct_attr_description =
   Attribute.declare "deriving.cmd.description" Attribute.Context.core_type
     Ast_pattern.(single_expr_payload (estring __))
-    (fun e -> e)
+    Fun.id
 
 let try_with_core_type_of_decl type_decl =
   let loc = !Ast_helper.default_loc in
