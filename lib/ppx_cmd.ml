@@ -45,6 +45,11 @@ let ct_attr_description =
     Ast_pattern.(single_expr_payload (estring __))
     Fun.id
 
+let ct_attr_env =
+  Attribute.declare "deriving.cmd.env" Attribute.Context.core_type
+    Ast_pattern.(single_expr_payload (esequence (estring __)))
+    Fun.id
+
 let try_with_core_type_of_decl type_decl =
   let loc = !Ast_helper.default_loc in
   let typ = Ppx_deriving.core_type_of_type_decl type_decl in
@@ -228,6 +233,7 @@ type flag = {
   parser : expression option;
   default : expression option;
   description : string option;
+  env : string list;
 }
 
 let flag_of_label_decl quoter name loc typ =
@@ -248,7 +254,8 @@ let flag_of_label_decl quoter name loc typ =
     | default, _ -> default
   in
   let description = Attribute.get ct_attr_description typ in
-  { name; long; short; parser; default; description }
+  let env = Option.value (Attribute.get ct_attr_env typ) ~default:[] in
+  { name; long; short; parser; default; description; env }
 
 type arg_details = None | Default of expression | NonemptyList | List
 
@@ -675,22 +682,67 @@ Arguments:
         in
         let full_body =
           List.fold_left
-            (fun body ({ name; parser; default; _ } : flag) ->
-              Exp.let_ Nonrecursive
-                [
-                  {
-                    pvb_pat = pvar (flag_prefix ^ name);
-                    pvb_expr =
-                      (if Option.is_some parser then
-                         match default with
-                         | Some default -> [%expr ref (Some [%e default])]
-                         | None -> [%expr ref None]
-                       else [%expr ref false]);
-                    pvb_attributes = [];
-                    pvb_loc = !Ast_helper.default_loc;
-                  };
-                ]
-                body)
+            (fun body ({ name; parser; default; env; _ } : flag) ->
+              match parser with
+              | Some parser -> begin
+                  let default =
+                    [%expr
+                      Ok
+                        [%e
+                          match default with
+                          | Some default -> [%expr ref (Some [%e default])]
+                          | None -> [%expr ref None]]]
+                  in
+                  let env_result =
+                    List.fold_right
+                      (fun env body ->
+                        [%expr
+                          match Sys.getenv_opt [%e str env] with
+                          | Some v -> begin
+                              match [%e parser] v with
+                              | Result.Ok x -> Ok (ref (Some x))
+                              | Error e ->
+                                  Error
+                                    ("error parsing value for environment \
+                                      variable \"" ^ String.escaped env ^ "\": "
+                                   ^ e)
+                            end
+                          | None -> [%e body]])
+                      env default
+                  in
+                  [%expr
+                    match [%e env_result] with
+                    | Result.Ok [%p pvar (flag_prefix ^ name)] -> [%e body]
+                    | Error e -> Error e]
+                end
+              | None ->
+                  let default = [%expr Ok (ref false)] in
+                  let env_result =
+                    List.fold_right
+                      (fun env body ->
+                        [%expr
+                          match Sys.getenv_opt [%e str env] with
+                          | Some v -> begin
+                              match
+                                [%e
+                                  parser_of_typ !Ast_helper.default_loc
+                                    [%type: bool]]
+                                  v
+                              with
+                              | Result.Ok x -> Ok (ref x)
+                              | Error e ->
+                                  Error
+                                    ("error parsing value for environment \
+                                      variable \"" ^ String.escaped env ^ "\": "
+                                   ^ e)
+                            end
+                          | None -> [%e body]])
+                      env default
+                  in
+                  [%expr
+                    match [%e env_result] with
+                    | Result.Ok [%p pvar (flag_prefix ^ name)] -> [%e body]
+                    | Error e -> Error e])
             [%expr
               let args = ref [] in
               [%e body]]
