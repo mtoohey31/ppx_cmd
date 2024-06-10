@@ -4,7 +4,6 @@ Declarative command line parsing for OCaml with `@@deriving`.
 
 ## TODO
 
-- [ ] Multiple long flags.
 - [ ] Negatable boolean flags.
 - [ ] Version flags (with version from build system if possible).
 - [ ] Subcommands.

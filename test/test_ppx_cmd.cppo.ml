@@ -4,7 +4,14 @@ let show_cmd_result show_cmd = function
   | Ok cmd -> "Ok (" ^ show_cmd cmd ^ ")"
   | Error e -> "Error (" ^ e ^ ")"
 
-type basic = { id : int; name : string; [@short 'n'] quiet : bool }
+type basic = {
+  id : int;
+      [@long
+        "id";
+        "ident"]
+  name : string; [@short 'n']
+  quiet : bool;
+}
 [@@deriving cmd, show]
 
 let test_basic _ =
@@ -14,11 +21,11 @@ let test_basic _ =
     (try_parse_basic_with [ "--id"; "7"; "--name"; "joe" ]);
   assert_equal
     (Ok { id = -518; name = "bob"; quiet = false })
-    (try_parse_basic_with [ "--id"; "-518"; "-n=bob" ]);
+    (try_parse_basic_with [ "--ident"; "-518"; "-n=bob" ]);
   assert_equal (Error {|no value provided for flag "--name"|})
     (try_parse_basic_with [ "--id"; "518" ]);
   assert_equal (Error {|unexpected positional argument ""|})
-    (try_parse_basic_with [ "--id"; "7"; "--name"; "joe"; "--quiet=" ])
+    (try_parse_basic_with [ "--ident"; "7"; "--name"; "joe"; "--quiet=" ])
 
 type types = {
   a : int;

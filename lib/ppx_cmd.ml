@@ -37,7 +37,7 @@ let ct_attr_short =
 
 let ct_attr_long =
   Attribute.declare "deriving.cmd.long" Attribute.Context.core_type
-    Ast_pattern.(single_expr_payload (estring __))
+    Ast_pattern.(single_expr_payload (esequence (estring __)))
     Fun.id
 
 let ct_attr_description =
@@ -228,7 +228,7 @@ let rec parser_of_typ loc = function
 
 type flag = {
   name : string;
-  long : string;
+  long : string list;
   short : char option;
   parser : expression option;
   default : expression option;
@@ -237,7 +237,7 @@ type flag = {
 }
 
 let flag_of_label_decl quoter name loc typ =
-  let long = Option.value (Attribute.get ct_attr_long typ) ~default:name in
+  let long = Option.value (Attribute.get ct_attr_long typ) ~default:[ name ] in
   let short = Attribute.get ct_attr_short typ in
   let parser =
     match Attribute.get ct_attr_parser typ with
@@ -336,7 +336,7 @@ let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
                    ( String.concat ", "
                        (Option.to_list
                           (Option.map (fun c -> "-" ^ String.make 1 c) short)
-                       @ [ "--" ^ long ]),
+                       @ List.map (fun long -> "--" ^ long) long),
                      description ))
                  flags
           in
@@ -429,12 +429,15 @@ Arguments:
                 [%e evar (flag_prefix ^ name)] := true;
                 inner ss]
         in
-        let long_case { name; long; parser; _ } =
-          {
-            pc_lhs = Pat.constant (Const.string long);
-            pc_guard = None;
-            pc_rhs = rhs_case name parser;
-          }
+        let long_cases { name; long; parser; _ } =
+          List.map
+            (fun long ->
+              {
+                pc_lhs = Pat.constant (Const.string long);
+                pc_guard = None;
+                pc_rhs = rhs_case name parser;
+              })
+            long
         in
         let short_case { name; short; parser; _ } =
           Option.map
@@ -474,7 +477,7 @@ Arguments:
           }
         in
         let handle_long =
-          List.map long_case flags
+          List.map long_cases flags |> List.flatten
           |> (Fun.flip List.append) [ long_help_case; unrecognized_case ]
           |> Exp.match_ (evar "long")
         in
@@ -485,18 +488,21 @@ Arguments:
         in
         let end_flags =
           List.fold_left
-            (fun end_flags { name; long; parser; _ } ->
+            (fun end_flags { name; long; short; parser; _ } ->
               if Option.is_some parser then
                 [%expr
                   match ![%e evar (flag_prefix ^ name)] with
                   | Some [%p pvar name] -> [%e end_flags]
                   | None ->
-                      Error
-                        [%e
-                          str
-                            ("no value provided for flag \""
-                            ^ String.escaped ("--" ^ long)
-                            ^ "\"")]]
+                      [%e
+                        let repr =
+                          match (long, short) with
+                          | long :: _, _ -> "\"--" ^ String.escaped long ^ "\""
+                          | _, Some short -> "\"-" ^ Char.escaped short ^ "\""
+                          | _, _ -> name
+                        in
+                        [%expr
+                          Error [%e str ("no value provided for flag " ^ repr)]]]]
               else end_flags)
             [%expr
               Ok
