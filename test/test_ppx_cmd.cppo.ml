@@ -102,19 +102,19 @@ let test_types _ =
        ])
 
 type many_short = {
-  foo : bool; [@short 'f']
+  foo : bool; [@short 'f'] [@default false]
   bar : string; [@short 'b']
-  quux : bool; [@short 'q']
+  quux : bool; [@short 'q'] [@default true]
 }
 [@@deriving cmd, show]
 
 let test_many_short _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_many_short) in
   assert_equal
-    (Ok { foo = true; bar = "baz"; quux = true })
+    (Ok { foo = true; bar = "baz"; quux = false })
     (try_parse_many_short_with [ "-fqb=baz" ]);
   assert_equal
-    (Ok { foo = false; bar = "baz"; quux = false })
+    (Ok { foo = false; bar = "baz"; quux = true })
     (try_parse_many_short_with [ "-b"; "baz" ])
 
 type defaults = {
@@ -203,6 +203,22 @@ let test_variants _ =
     (Ok { flag1 = `DBBazDBQuux; flag2 = Foo })
     (try_parse_variants_with [ "--flag1"; "db_baz_db_quux"; "--flag2"; "foo" ])
 
+type negatable = {
+  foo : bool; [@default true]
+  bar : bool; [@negatable]
+  baz : bool; [@default true] [@negatable]
+}
+[@@deriving cmd, show]
+
+let test_negatable _ =
+  let assert_equal = assert_equal ~printer:(show_cmd_result show_negatable) in
+  assert_equal
+    (Ok { foo = true; bar = true; baz = true })
+    (try_parse_negatable_with [ "--bar" ]);
+  assert_equal
+    (Ok { foo = false; bar = false; baz = false })
+    (try_parse_negatable_with [ "--foo"; "--bar"; "--no-bar"; "--no-baz" ])
+
 let suite =
   "Test deriving(cmd)"
   >::: [
@@ -213,6 +229,7 @@ let suite =
          "test_mv" >:: test_mv;
          "test_list" >:: test_list;
          "test_variants" >:: test_variants;
+         "test_negatable" >:: test_negatable;
        ]
 
 let _ = run_test_tt_main suite

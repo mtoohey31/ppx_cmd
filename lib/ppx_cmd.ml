@@ -19,6 +19,9 @@ let ct_attr_default =
     Ast_pattern.(single_expr_payload __)
     Fun.id
 
+let ct_attr_negatable =
+  Attribute.declare_flag "deriving.cmd.negatable" Attribute.Context.core_type
+
 let ct_attr_nonempty =
   Attribute.declare_flag "deriving.cmd.nonempty" Attribute.Context.core_type
 
@@ -232,6 +235,7 @@ type flag = {
   short : char option;
   parser : expression option;
   default : expression option;
+  negatable : bool;
   description : string option;
   env : string list;
 }
@@ -253,9 +257,14 @@ let flag_of_label_decl quoter name loc typ =
     | None, [%type: [%t? _] option] -> Some [%expr None]
     | default, _ -> default
   in
+  let negatable =
+    match typ with
+    | [%type: bool] -> Attribute.has_flag ct_attr_negatable typ
+    | _ -> false
+  in
   let description = Attribute.get ct_attr_description typ in
   let env = Option.value (Attribute.get ct_attr_env typ) ~default:[] in
-  { name; long; short; parser; default; description; env }
+  { name; long; short; parser; default; negatable; description; env }
 
 type arg_details = None | Default of expression | NonemptyList | List
 
@@ -284,9 +293,7 @@ let arg_of_label_decl quoter name loc typ =
     | Some default, _ -> Default default
     | None, [%type: [%t? _] option] -> Default [%expr None]
     | None, [%type: [%t? _] list] ->
-        if Attribute.get ct_attr_nonempty typ |> Option.is_some then
-          NonemptyList
-        else List
+        if Attribute.has_flag ct_attr_nonempty typ then NonemptyList else List
     | None, _ -> None
   in
   let description = Attribute.get ct_attr_description typ in
@@ -300,8 +307,7 @@ let input_of_label_decl quoter
     Ppx_deriving.remove_pervasives ~deriver
       { pld_type with ptyp_attributes = attrs }
   in
-  let arg = Attribute.get ct_attr_arg typ in
-  if Option.is_some arg then
+  if Attribute.has_flag ct_attr_arg typ then
     Either.Right (arg_of_label_decl quoter name loc typ)
   else Either.Left (flag_of_label_decl quoter name loc typ)
 
@@ -407,7 +413,7 @@ Arguments:
         in
         let arg_prefix = "arg_" in
         let flag_prefix = "flag_" in
-        let rhs_case name = function
+        let rhs_case name negation = function
           | Some parser ->
               [%expr
                 match ss with
@@ -426,26 +432,49 @@ Arguments:
                   end]
           | None ->
               [%expr
-                [%e evar (flag_prefix ^ name)] := true;
+                [%e evar (flag_prefix ^ name)]
+                := [%e if negation then [%expr false] else [%expr true]];
                 inner ss]
         in
-        let long_cases { name; long; parser; _ } =
-          List.map
+        let long_cases { name; long; parser; default; negatable; _ } =
+          List.concat_map
             (fun long ->
-              {
-                pc_lhs = Pat.constant (Const.string long);
-                pc_guard = None;
-                pc_rhs = rhs_case name parser;
-              })
+              let normal =
+                {
+                  pc_lhs = Pat.constant (Const.string long);
+                  pc_guard = None;
+                  pc_rhs =
+                    rhs_case name
+                      (match (default, negatable) with
+                      | Some [%expr true], false -> true
+                      | _ -> false)
+                      parser;
+                }
+              in
+              if negatable then
+                [
+                  normal;
+                  {
+                    pc_lhs = Pat.constant (Const.string ("no-" ^ long));
+                    pc_guard = None;
+                    pc_rhs = rhs_case name true parser;
+                  };
+                ]
+              else [ normal ])
             long
         in
-        let short_case { name; short; parser; _ } =
+        let short_case { name; short; parser; default; negatable; _ } =
           Option.map
             (fun short ->
               {
                 pc_lhs = Pat.constant (Const.char short);
                 pc_guard = None;
-                pc_rhs = rhs_case name parser;
+                pc_rhs =
+                  rhs_case name
+                    (match (default, negatable) with
+                    | Some [%expr true], false -> true
+                    | _ -> false)
+                    parser;
               })
             short
         in
@@ -477,7 +506,7 @@ Arguments:
           }
         in
         let handle_long =
-          List.map long_cases flags |> List.flatten
+          List.concat_map long_cases flags
           |> (Fun.flip List.append) [ long_help_case; unrecognized_case ]
           |> Exp.match_ (evar "long")
         in
@@ -722,7 +751,11 @@ Arguments:
                     | Error e -> Error e]
                 end
               | None ->
-                  let default = [%expr Ok (ref false)] in
+                  let default =
+                    match default with
+                    | Some default -> [%expr Ok (ref [%e default])]
+                    | None -> [%expr Ok (ref false)]
+                  in
                   let env_result =
                     List.fold_right
                       (fun env body ->
