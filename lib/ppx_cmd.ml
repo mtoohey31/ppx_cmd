@@ -1,6 +1,4 @@
 open Ppxlib
-open Asttypes
-open Parsetree
 open Ast_helper
 open Ppx_deriving.Ast_convenience
 
@@ -311,7 +309,7 @@ let input_of_label_decl quoter
     Either.Right (arg_of_label_decl quoter name loc typ)
   else Either.Left (flag_of_label_decl quoter name loc typ)
 
-let str_of_type ({ ptype_loc = loc; _ } as type_decl) =
+let str_of_type version ({ ptype_loc = loc; _ } as type_decl) =
   let quoter = Ppx_deriving.create_quoter () in
   let try_parser_with =
     match (type_decl.ptype_kind, type_decl.ptype_manifest) with
@@ -505,14 +503,42 @@ Arguments:
               [%expr Error ("unrecognized flag \"" ^ String.escaped s ^ "\"")];
           }
         in
+        let extra_long_cases, extra_short_cases =
+          match version with
+          | Some version ->
+              let pc_rhs =
+                [%expr
+                  print_endline [%e str version];
+                  exit 0]
+              in
+              let long_version_case =
+                {
+                  pc_lhs = Pat.constant (Const.string "version");
+                  pc_guard = None;
+                  pc_rhs;
+                }
+              in
+              let short_version_case =
+                {
+                  pc_lhs = Pat.constant (Const.char 'v');
+                  pc_guard = None;
+                  pc_rhs;
+                }
+              in
+              ( [ long_help_case; long_version_case; unrecognized_case ],
+                [ short_help_case; short_version_case; unrecognized_case ] )
+          | None ->
+              ( [ long_help_case; unrecognized_case ],
+                [ short_help_case; unrecognized_case ] )
+        in
         let handle_long =
           List.concat_map long_cases flags
-          |> (Fun.flip List.append) [ long_help_case; unrecognized_case ]
+          |> (Fun.flip List.append) extra_long_cases
           |> Exp.match_ (evar "long")
         in
         let handle_short =
           List.filter_map short_case flags
-          |> (Fun.flip List.append) [ short_help_case; unrecognized_case ]
+          |> (Fun.flip List.append) extra_short_cases
           |> Exp.match_ (evar "short")
         in
         let end_flags =
@@ -850,8 +876,13 @@ Arguments:
   ]
 
 let impl_generator =
-  Deriving.Generator.V2.make_noarg (fun ~ctxt:_ (_, type_decls) ->
-      [ Str.value Nonrecursive (List.concat (List.map str_of_type type_decls)) ])
+  Deriving.Generator.V2.make
+    Deriving.Args.(empty +> arg "version" (estring __))
+    (fun ~ctxt:_ (_, type_decls) version ->
+      [
+        Str.value Nonrecursive
+          (List.concat (List.map (str_of_type version) type_decls));
+      ])
 
 let intf_generator =
   Deriving.Generator.V2.make_noarg (fun ~ctxt:_ (_, type_decls) ->

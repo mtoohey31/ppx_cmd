@@ -12,7 +12,7 @@ type basic = {
   name : string; [@short 'n']
   quiet : bool;
 }
-[@@deriving cmd, show]
+[@@deriving cmd { version = "5.7" }, show]
 
 let test_basic _ =
   let assert_equal = assert_equal ~printer:(show_cmd_result show_basic) in
